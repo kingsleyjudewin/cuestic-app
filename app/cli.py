@@ -225,11 +225,11 @@ def import_volunteers_command(dry_run, confirm, operator, file_path, skip_ambigu
 @with_appcontext
 def import_documentation_members_command(dry_run, confirm, operator, file_path, json_output):
     """
-    Register members under the existing Documentation team.
+    Register members and provision login accounts under the existing Documentation team.
 
     Safe, repeatable registration tool that validates all records, enforces President
     authorization, normalizes phone numbers to E.164 (+91), prevents duplicates,
-    and commits transactionally without creating login accounts or changing roles.
+    creates user login accounts with expiring single-use setup tokens, and commits transactionally.
     Runs in DRY-RUN mode by default unless --confirm is explicitly passed.
     """
     is_dry_run = dry_run or not confirm
@@ -251,53 +251,70 @@ def import_documentation_members_command(dry_run, confirm, operator, file_path, 
     )
 
     if json_output:
-        click.echo(json.dumps(result, indent=2, default=str))
+        clean_result = {
+            "mode": "dry_run" if is_dry_run else "live",
+            "operator": preview["operator"]["username"],
+            "team": preview["team"]["name"],
+            "team_id": preview["team"]["id"],
+            "total_input": preview["total_records"],
+            "created_count": len(result.get("created", [])),
+            "skipped_count": len(result.get("skipped", [])),
+            "failed_count": len(result.get("failed", [])),
+            "created": [
+                {k: v for k, v in c.items() if k != "setup_token"}
+                for c in result.get("created", [])
+            ],
+            "skipped": result.get("skipped", []),
+            "failed": result.get("failed", []),
+        }
+        click.echo(json.dumps(clean_result, indent=2, default=str))
         return
 
     # Formatted CLI Presentation
-    click.echo("\n" + "=" * 80)
-    click.secho("  DEPARTMENT CLUB — DOCUMENTATION TEAM MEMBER REGISTRATION", fg="cyan", bold=True)
-    click.echo("=" * 80)
+    click.echo("\n" + "=" * 95)
+    click.secho("  DEPARTMENT CLUB — DOCUMENTATION TEAM ACCOUNT PROVISIONING", fg="cyan", bold=True)
+    click.echo("=" * 95)
     click.echo(f"  Target Team  : {preview['team']['name']} (ID: {preview['team']['id']}, Current Members: {preview['team']['current_member_count']})")
     click.echo(f"  Authorized By: {preview['operator']['username']} (Role: {preview['operator']['role']})")
     click.echo(f"  Mode         : {'DRY RUN (Preview Only — No Database Writes)' if is_dry_run else 'LIVE COMMIT'}")
-    click.echo("-" * 80)
+    click.echo("-" * 95)
 
-    click.echo(f"{'#':<3} {'Full Name':<18} {'Phone (E.164)':<20} {'Class':<12} {'Team':<16} {'Status':<12}")
-    click.echo("-" * 80)
+    click.echo(f"{'#':<3} {'Full Name':<20} {'Username':<20} {'Proposed Email':<28} {'Phone (E.164)':<16} {'Status':<10}")
+    click.echo("-" * 95)
 
     for item in preview["inspected_records"]:
         norm_phone = item["normalized_phone"] or item["raw_phone"]
         status_color = "green" if item["status"] == "READY" else ("yellow" if item["status"] in ("EXISTS_IN_DB", "DUPLICATE_IN_BATCH") else "red")
 
         click.secho(
-            f"{item['index']:<3} {item['full_name']:<18} {norm_phone:<20} {item['class_section']:<12} {item['team_name']:<16} {item['status']:<12}",
+            f"{item['index']:<3} {item['full_name']:<20} {item['username']:<20} {item['proposed_email']:<28} {norm_phone:<16} {item['status']:<10}",
             fg=status_color
         )
         if item.get("issues"):
             for issue in item["issues"]:
                 click.secho(f"    ↳ Notice: {issue}", fg="yellow")
 
-    click.echo("-" * 80)
-    click.echo("  Registration Constraints:")
-    click.echo("    - Pure member records: No user accounts, passwords, or role elevations are created.")
+    click.echo("-" * 95)
+    click.echo("  Security & Provisioning Policies:")
+    click.echo("    - Role assignment: Standard 'member' role (no admin or president elevation).")
+    click.echo("    - Passwords: High-entropy random temporary credentials with 72h single-use setup tokens.")
     click.echo("    - Phone format: Preserves country code (+91) with standard E.164 normalization.")
-    click.echo("=" * 80)
+    click.echo("=" * 95)
 
     if is_dry_run:
         click.secho(
-            "\n[DRY RUN SUMMARY] 0 records written to database.",
+            "\n[DRY RUN SUMMARY] 0 accounts written to database.",
             fg="yellow",
             bold=True
         )
         click.echo(
             f"  Total records inspected: {preview['total_records']}\n"
-            f"  Ready for registration: {preview['ready_count']}\n"
+            f"  Ready for import: {preview['ready_count']}\n"
             f"  Existing/duplicate: {preview['duplicate_count']}\n"
             f"  Invalid: {preview['invalid_count']}\n"
         )
         click.secho(
-            "To execute this registration and write records to the database, rerun with --confirm:\n"
+            "To execute this import and create these accounts in Neon PostgreSQL, rerun with --confirm:\n"
             f"  flask import-documentation-members --confirm --operator {preview['operator']['username']}\n",
             bold=True
         )
@@ -308,12 +325,13 @@ def import_documentation_members_command(dry_run, confirm, operator, file_path, 
             bold=True
         )
         if result["created"]:
-            click.echo("\nSuccessfully Registered Members:")
+            click.echo("\nSuccessfully Created Documentation Team Accounts:")
             for m in result["created"]:
                 click.echo(
-                    f"  [+] {m['full_name']} | Phone: {m['phone_number']} | Class: {m['class_name']} "
-                    f"| Member ID: {m['id']} | Team: {m['team_name']} (ID: {m['team_id']})"
+                    f"  [+] {m['full_name']} | Username: {m['username']} | Email: {m['proposed_email']} "
+                    f"| Phone: {m['phone_number']} | Status: {m['account_status']} | Setup: {m['credential_setup_status']}"
                 )
+                click.echo(f"      Setup Token: {m['setup_token']} (Expires: {m['setup_expires_at']})")
 
         if result["skipped"]:
             click.echo("\nSkipped Records (Duplicates):")

@@ -15,6 +15,8 @@ from app.api.me import me_bp
 from app.api.documentation import documentation_bp
 from app.api.media import media_bp
 from app.api.communities import communities_bp
+from app.api.mc import mc_bp
+from app.api.research import research_bp
 
 
 def register_api_blueprints(app):
@@ -35,4 +37,7 @@ def register_api_blueprints(app):
     app.register_blueprint(documentation_bp, url_prefix="/api/v1/documentation")
     app.register_blueprint(media_bp, url_prefix="/api/v1/media")
     app.register_blueprint(communities_bp, url_prefix="/api/v1/communities")
+    app.register_blueprint(mc_bp, url_prefix="/api/v1/mc")
+    app.register_blueprint(research_bp, url_prefix="/api/v1/research")
+
 

@@ -28,7 +28,20 @@ class AuthService extends ChangeNotifier {
   String get userRole => _currentUser?['role']?.toString() ?? 'member';
   bool get isAdmin => userRole == 'president' || userRole == 'admin';
   bool get isTeamLeader => userRole == 'team_leader';
-  bool get isVolunteer => !isAdmin && !isTeamLeader && !isDocumentationTeam && !isMediaTeam;
+  bool get isFacultyCoordinator => userRole == 'faculty_coordinator';
+  bool get isStudentResearcher => userRole == 'student_researcher';
+  bool get isResearchUser => isFacultyCoordinator || isStudentResearcher;
+  bool get mustChangePassword =>
+      _currentUser?['must_change_password'] == true ||
+      _currentUser?['credential_setup_status'] == 'pending';
+
+  bool get isVolunteer =>
+      !isAdmin &&
+      !isTeamLeader &&
+      !isDocumentationTeam &&
+      !isMediaTeam &&
+      !isMcTeam &&
+      !isResearchUser;
   bool get isDocumentationTeam {
     if (isAdmin) return false;
     if (teamId == 2) return true;
@@ -41,12 +54,29 @@ class AuthService extends ChangeNotifier {
     final name = teamName?.toLowerCase() ?? '';
     return name == 'media' || name.contains('media') || name.contains('design');
   }
+  bool get isMcTeam {
+    if (isAdmin) return false;
+    if (teamId == 5) return true;
+    final name = teamName?.toLowerCase() ?? '';
+    return name == 'mc' || name.contains('mc') || name.contains('ceremonies') || name.contains('anchor');
+  }
   bool get canAccessDocumentation => isAdmin || isDocumentationTeam;
+  bool get canAccessMc => isAdmin || isMcTeam;
   bool get canCreateEvent => isAdmin || isTeamLeader;
-  int? get memberId => (_currentUser?['member_id'] as num?)?.toInt();
+  int? get memberId {
+    final v = _currentUser?['member_id'];
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
+  }
   String? get memberName => _currentUser?['member_name']?.toString();
   String get displayName => memberName ?? username;
-  int? get teamId => (_currentUser?['team_id'] as num?)?.toInt();
+  int? get teamId {
+    final v = _currentUser?['team_id'];
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v);
+    return null;
+  }
   String? get teamName => _currentUser?['team_name']?.toString();
 
   Future<void> initialize() async {
@@ -144,6 +174,12 @@ class AuthService extends ChangeNotifier {
       err = decoded['error']['message'] ?? err;
     }
     throw Exception(err);
+  }
+
+  Future<void> updateCurrentUser(Map<String, dynamic> userObj) async {
+    _currentUser = userObj;
+    await _storage.write(key: AppConstants.keyUserData, value: jsonEncode(userObj));
+    notifyListeners();
   }
 
   Future<void> logout() async {

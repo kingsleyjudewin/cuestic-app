@@ -11,6 +11,34 @@ from app.models.device_token import DeviceToken
 from app.models.documentation import EventFolder, FolderDocument, ActivityReport
 from app.models.media import MediaFile, GoogleDriveIntegration
 from app.models.community import Community, CommunityChannel, CommunityMember, ChatMessage
+from app.models.mc_script import (
+    McScript,
+    McScriptReview,
+    McDriveFolderMapping,
+    McTemplate,
+    McTemplateSegment,
+    McScriptSegment,
+)
+from app.models.research import (
+    FacultyProfile,
+    ResearchStudentProfile,
+    ResearchTeam,
+    ResearchTeamMember,
+    ResearchProject,
+    ResearchProjectMember,
+    ResearchMilestone,
+    ResearchMilestoneAssignee,
+    ResearchTask,
+    ResearchTaskAssignee,
+    ResearchProgressSubmission,
+    ResearchFeedbackThread,
+    ResearchFeedbackMessage,
+    ResearchAttachment,
+    ResearchMeeting,
+    ResearchMeetingParticipant,
+    ResearchNotification,
+    ResearchEmailLog,
+)
 
 __all__ = [
     "User",
@@ -35,5 +63,29 @@ __all__ = [
     "CommunityChannel",
     "CommunityMember",
     "ChatMessage",
+    "McScript",
+    "McScriptReview",
+    "McDriveFolderMapping",
+    "McTemplate",
+    "McTemplateSegment",
+    "McScriptSegment",
+    "FacultyProfile",
+    "ResearchStudentProfile",
+    "ResearchTeam",
+    "ResearchTeamMember",
+    "ResearchProject",
+    "ResearchProjectMember",
+    "ResearchMilestone",
+    "ResearchMilestoneAssignee",
+    "ResearchTask",
+    "ResearchTaskAssignee",
+    "ResearchProgressSubmission",
+    "ResearchFeedbackThread",
+    "ResearchFeedbackMessage",
+    "ResearchAttachment",
+    "ResearchMeeting",
+    "ResearchMeetingParticipant",
+    "ResearchNotification",
+    "ResearchEmailLog",
 ]
 

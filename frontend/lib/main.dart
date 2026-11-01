@@ -13,7 +13,11 @@ import 'screens/select_team_screen.dart';
 import 'screens/volunteer_dashboard_screen.dart';
 import 'screens/documentation_portal_screen.dart';
 import 'screens/media_dashboard_screen.dart';
+import 'screens/mc_dashboard_screen.dart';
 import 'screens/community_screen.dart';
+import 'screens/first_login_password_screen.dart';
+import 'screens/faculty_dashboard_screen.dart';
+import 'screens/student_researcher_dashboard_screen.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
 import 'services/community_service.dart';
@@ -21,6 +25,7 @@ import 'services/notification_service.dart';
 import 'services/storage_service.dart';
 import 'services/sync_service.dart';
 import 'services/whatsapp_service.dart';
+import 'services/research_service.dart';
 
 
 void main() async {
@@ -51,12 +56,15 @@ void main() async {
     navigatorKey: navigatorKey,
   );
 
+  final researchService = ResearchService(authService);
+
   // Initialize push notification service safely
   await notificationService.initialize();
 
   runApp(DepartmentClubApp(
     navigatorKey: navigatorKey,
     authService: authService,
+    researchService: researchService,
     syncService: syncService,
     whatsAppService: whatsAppService,
     communityService: communityService,
@@ -67,6 +75,7 @@ void main() async {
 class DepartmentClubApp extends StatefulWidget {
   final GlobalKey<NavigatorState> navigatorKey;
   final AuthService authService;
+  final ResearchService researchService;
   final SyncService syncService;
   final WhatsAppService whatsAppService;
   final CommunityService communityService;
@@ -76,6 +85,7 @@ class DepartmentClubApp extends StatefulWidget {
     super.key,
     required this.navigatorKey,
     required this.authService,
+    required this.researchService,
     required this.syncService,
     required this.whatsAppService,
     required this.communityService,
@@ -216,8 +226,27 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
       );
     }
 
-    if (widget.authService.isAdmin || widget.authService.isTeamLeader) {
-      return _buildSelectEventScreen();
+    if (widget.authService.mustChangePassword) {
+      return FirstLoginPasswordScreen(
+        authService: widget.authService,
+        researchService: widget.researchService,
+      );
+    }
+
+    if (widget.authService.isFacultyCoordinator) {
+      return FacultyDashboardScreen(
+        authService: widget.authService,
+        researchService: widget.researchService,
+        onLogout: _handleLogout,
+      );
+    }
+
+    if (widget.authService.isStudentResearcher) {
+      return StudentResearcherDashboardScreen(
+        authService: widget.authService,
+        researchService: widget.researchService,
+        onLogout: _handleLogout,
+      );
     }
 
     if (widget.authService.isDocumentationTeam) {
@@ -225,6 +254,9 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
         authService: widget.authService,
         syncService: widget.syncService,
         onLogout: _handleLogout,
+        onSwitchToAdmin: widget.authService.isAdmin
+            ? () => widget.navigatorKey.currentState?.pushNamedAndRemoveUntil('/', (r) => false)
+            : null,
       );
     }
 
@@ -234,6 +266,21 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
         syncService: widget.syncService,
         onLogout: _handleLogout,
       );
+    }
+
+    if (widget.authService.isMcTeam) {
+      return McDashboardScreen(
+        authService: widget.authService,
+        syncService: widget.syncService,
+        onLogout: _handleLogout,
+        onSwitchToAdmin: (widget.authService.isAdmin || widget.authService.isTeamLeader)
+            ? () => widget.navigatorKey.currentState?.pushNamedAndRemoveUntil('/', (r) => false)
+            : null,
+      );
+    }
+
+    if (widget.authService.isAdmin || widget.authService.isTeamLeader) {
+      return _buildSelectEventScreen();
     }
 
     return VolunteerDashboardScreen(
@@ -290,6 +337,40 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
               authService: widget.authService,
               syncService: widget.syncService,
               onLogout: _handleLogout,
+            ),
+          );
+        } else if (settings.name == '/mc' || settings.name == '/mc_dashboard') {
+          return MaterialPageRoute(
+            builder: (context) => McDashboardScreen(
+              authService: widget.authService,
+              syncService: widget.syncService,
+              onLogout: _handleLogout,
+              onSwitchToAdmin: widget.authService.isAdmin
+                  ? () => widget.navigatorKey.currentState?.pushNamedAndRemoveUntil('/', (r) => false)
+                  : null,
+            ),
+          );
+        } else if (settings.name == '/faculty_dashboard' || settings.name == '/faculty') {
+          return MaterialPageRoute(
+            builder: (context) => FacultyDashboardScreen(
+              authService: widget.authService,
+              researchService: widget.researchService,
+              onLogout: _handleLogout,
+            ),
+          );
+        } else if (settings.name == '/student_researcher_dashboard' || settings.name == '/student_research') {
+          return MaterialPageRoute(
+            builder: (context) => StudentResearcherDashboardScreen(
+              authService: widget.authService,
+              researchService: widget.researchService,
+              onLogout: _handleLogout,
+            ),
+          );
+        } else if (settings.name == '/change_password') {
+          return MaterialPageRoute(
+            builder: (context) => FirstLoginPasswordScreen(
+              authService: widget.authService,
+              researchService: widget.researchService,
             ),
           );
         } else if (settings.name == '/assignment_detail') {

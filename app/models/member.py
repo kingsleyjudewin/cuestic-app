@@ -10,7 +10,7 @@ class Member(db.Model):
     full_name = db.Column(db.String(150), nullable=False, index=True)
     email = db.Column(db.String(120), nullable=True, index=True)
     registration_number = db.Column(db.String(50), unique=True, nullable=True, index=True)
-    class_name = db.Column(db.String(50), nullable=False)
+    class_name = db.Column(db.String(50), nullable=True)
     section = db.Column(db.String(20), nullable=True)
     phone_number = db.Column(db.String(30), nullable=False)  # Normalized E.164 format e.g. +919876543210
     country_code = db.Column(db.String(10), default="+91", nullable=False)

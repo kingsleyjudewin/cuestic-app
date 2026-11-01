@@ -20,15 +20,28 @@ class Event {
   });
 
   factory Event.fromJson(Map<String, dynamic> json) {
+    int parseInt(dynamic val, [int def = 0]) {
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val) ?? def;
+      return def;
+    }
+
+    int? parseOptionalInt(dynamic val) {
+      if (val == null) return null;
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val);
+      return null;
+    }
+
     return Event(
-      id: json['id'] as int,
+      id: parseInt(json['id']),
       name: json['name'] as String? ?? 'Unnamed Event',
       description: json['description'] as String?,
       startAt: DateTime.tryParse(json['start_at']?.toString() ?? '') ?? DateTime.now(),
       endAt: json['end_at'] != null ? DateTime.tryParse(json['end_at'].toString()) : null,
       location: json['location'] as String?,
       status: json['status'] as String? ?? 'upcoming',
-      createdBy: json['created_by'] as int?,
+      createdBy: parseOptionalInt(json['created_by']),
     );
   }
 

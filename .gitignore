@@ -29,6 +29,8 @@ database/backups/
 *-firebase-adminsdk-*.json
 *.pem
 *.key
+*credentials.txt
+
 
 # Distribution / packaging
 build/

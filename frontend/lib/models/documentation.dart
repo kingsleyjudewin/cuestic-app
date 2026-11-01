@@ -26,15 +26,21 @@ class FolderDocument {
   });
 
   factory FolderDocument.fromJson(Map<String, dynamic> json) {
+    int parseInt(dynamic val, [int def = 0]) {
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val) ?? def;
+      return def;
+    }
+
     return FolderDocument(
-      id: (json['id'] as num).toInt(),
-      folderId: (json['folder_id'] as num).toInt(),
+      id: parseInt(json['id']),
+      folderId: parseInt(json['folder_id']),
       fileName: json['file_name']?.toString() ?? json['original_filename']?.toString() ?? 'Unnamed Document',
-      fileSize: (json['file_size'] as num?)?.toInt() ?? 0,
+      fileSize: parseInt(json['file_size']),
       contentType: json['content_type']?.toString() ?? 'application/octet-stream',
       storageProvider: json['storage_provider']?.toString() ?? 'local',
       downloadUrl: json['download_url']?.toString(),
-      uploadedById: (json['uploaded_by_id'] as num?)?.toInt() ?? (json['uploaded_by'] as num?)?.toInt() ?? 0,
+      uploadedById: parseInt(json['uploaded_by_id'] ?? json['uploaded_by']),
       uploadedByName: json['uploaded_by_name']?.toString() ?? json['uploader_name']?.toString() ?? 'User',
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'].toString()) ?? DateTime.now()
@@ -58,6 +64,9 @@ class EventFolder {
   final String createdByName;
   final int documentCount;
   final List<FolderDocument> documents;
+  final String? linkedDriveFolderId;
+  final String? linkedDriveFolderName;
+  final String? driveWebViewLink;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -70,25 +79,44 @@ class EventFolder {
     required this.createdByName,
     required this.documentCount,
     this.documents = const [],
+    this.linkedDriveFolderId,
+    this.linkedDriveFolderName,
+    this.driveWebViewLink,
     required this.createdAt,
     required this.updatedAt,
   });
 
   factory EventFolder.fromJson(Map<String, dynamic> json) {
+    int parseInt(dynamic val, [int def = 0]) {
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val) ?? def;
+      return def;
+    }
+
+    int? parseOptionalInt(dynamic val) {
+      if (val == null) return null;
+      if (val is num) return val.toInt();
+      if (val is String) return int.tryParse(val);
+      return null;
+    }
+
     final docsRaw = json['documents'] as List<dynamic>?;
     final docs = docsRaw != null
         ? docsRaw.map((d) => FolderDocument.fromJson(d as Map<String, dynamic>)).toList()
         : <FolderDocument>[];
 
     return EventFolder(
-      id: (json['id'] as num).toInt(),
+      id: parseInt(json['id']),
       name: json['name']?.toString() ?? 'Untitled Folder',
       description: json['description']?.toString(),
-      eventId: (json['event_id'] as num?)?.toInt(),
-      createdById: (json['created_by_id'] as num?)?.toInt() ?? (json['created_by'] as num?)?.toInt() ?? 0,
+      eventId: parseOptionalInt(json['event_id']),
+      createdById: parseInt(json['created_by_id'] ?? json['created_by']),
       createdByName: json['created_by_name']?.toString() ?? json['creator_name']?.toString() ?? 'User',
-      documentCount: (json['document_count'] as num?)?.toInt() ?? docs.length,
+      documentCount: parseInt(json['document_count'], docs.length),
       documents: docs,
+      linkedDriveFolderId: json['linked_drive_folder_id']?.toString(),
+      linkedDriveFolderName: json['linked_drive_folder_name']?.toString(),
+      driveWebViewLink: json['drive_web_view_link']?.toString(),
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'].toString()) ?? DateTime.now()
           : DateTime.now(),

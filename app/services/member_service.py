@@ -123,7 +123,7 @@ class MemberService:
             full_name=data["full_name"].strip(),
             email=data.get("email").strip() if data.get("email") else None,
             registration_number=reg_no if reg_no else None,
-            class_name=data["class_name"].strip(),
+            class_name=data.get("class_name", "").strip() or None if data.get("class_name") else None,
             section=data.get("section", "").strip() or None if data.get("section") else None,
             phone_number=e164_phone,
             country_code=phone_info["country_code"],
@@ -233,7 +233,7 @@ class MemberService:
             full_name=data["full_name"].strip(),
             email=email,
             registration_number=reg_no,
-            class_name=data["class_name"].strip(),
+            class_name=data.get("class_name", "").strip() or None if data.get("class_name") else None,
             section=data.get("section", "").strip() or None if data.get("section") else None,
             phone_number=e164_phone,
             country_code=phone_info["country_code"],
@@ -728,7 +728,7 @@ class MemberService:
         if "full_name" in data:
             member.full_name = data["full_name"].strip()
         if "class_name" in data:
-            member.class_name = data["class_name"].strip()
+            member.class_name = data["class_name"].strip() if data.get("class_name") else None
         if "section" in data:
             member.section = data["section"].strip() if data["section"] else None
         if "whatsapp_opt_in" in data:

@@ -35,6 +35,11 @@ class NotificationService {
   String? get fcmToken => _fcmToken;
 
   Future<void> initialize() async {
+    if (kIsWeb) {
+      debugPrint('Firebase messaging initialization skipped on web platform (FirebaseOptions not configured for web).');
+      return;
+    }
+
     try {
       // Try to initialize Firebase
       await Firebase.initializeApp();

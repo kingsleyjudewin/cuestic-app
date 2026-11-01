@@ -5,7 +5,7 @@ class MemberCreateSchema(Schema):
     full_name = fields.String(required=True, validate=validate.Length(min=2, max=150))
     email = fields.Email(required=False, allow_none=True)
     registration_number = fields.String(required=False, allow_none=True, validate=validate.Length(max=50))
-    class_name = fields.String(required=True, validate=validate.Length(min=1, max=50))
+    class_name = fields.String(required=False, allow_none=True, validate=validate.Length(max=50))
     section = fields.String(required=False, allow_none=True, validate=validate.Length(max=20))
     phone_number = fields.String(required=True, validate=validate.Length(min=6, max=30))
     country_code = fields.String(required=False, load_default="+91")
@@ -32,7 +32,7 @@ class MemberUpdateSchema(Schema):
 class MemberAccountCreateSchema(Schema):
     full_name = fields.String(required=True, validate=validate.Length(min=2, max=150))
     registration_number = fields.String(required=False, allow_none=True, validate=validate.Length(max=50))
-    class_name = fields.String(required=True, validate=validate.Length(min=1, max=50))
+    class_name = fields.String(required=False, allow_none=True, validate=validate.Length(max=50))
     section = fields.String(required=False, allow_none=True, validate=validate.Length(max=20))
     phone_number = fields.String(required=True, validate=validate.Length(min=6, max=30))
     country_code = fields.String(required=False, load_default="+91")

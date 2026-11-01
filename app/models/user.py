@@ -14,9 +14,19 @@ class User(db.Model):
     ROLE_ADMIN = "admin"
     ROLE_TEAM_LEADER = "team_leader"
     ROLE_MEMBER = "member"
+    ROLE_FACULTY_COORDINATOR = "faculty_coordinator"
+    ROLE_STUDENT_RESEARCHER = "student_researcher"
 
-    ALL_ROLES = (ROLE_PRESIDENT, ROLE_ADMIN, ROLE_TEAM_LEADER, ROLE_MEMBER)
+    ALL_ROLES = (
+        ROLE_PRESIDENT,
+        ROLE_ADMIN,
+        ROLE_TEAM_LEADER,
+        ROLE_MEMBER,
+        ROLE_FACULTY_COORDINATOR,
+        ROLE_STUDENT_RESEARCHER,
+    )
     ADMIN_ROLES = (ROLE_PRESIDENT, ROLE_ADMIN)
+    RESEARCH_ROLES = (ROLE_FACULTY_COORDINATOR, ROLE_STUDENT_RESEARCHER)
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
@@ -36,6 +46,8 @@ class User(db.Model):
     created_tasks = db.relationship("Task", back_populates="creator", foreign_keys="Task.created_by", lazy="dynamic")
     assigned_tasks = db.relationship("TaskAssignment", back_populates="assigner", foreign_keys="TaskAssignment.assigned_by", lazy="dynamic")
     linked_member = db.relationship("Member", back_populates="linked_user", uselist=False)
+    faculty_profile = db.relationship("FacultyProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    research_student_profile = db.relationship("ResearchStudentProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
     def set_password(self, password: str):
         """Hash and set user password."""
@@ -57,6 +69,14 @@ class User(db.Model):
         """Check if user is a team leader."""
         return self.role == self.ROLE_TEAM_LEADER
 
+    def is_faculty_coordinator(self) -> bool:
+        """Check if user is a faculty research coordinator."""
+        return self.role == self.ROLE_FACULTY_COORDINATOR
+
+    def is_student_researcher(self) -> bool:
+        """Check if user is a student researcher."""
+        return self.role == self.ROLE_STUDENT_RESEARCHER
+
     def to_dict(self, include_roles: bool = True) -> dict:
         """Serialize user to dictionary."""
         data = {
@@ -75,6 +95,18 @@ class User(db.Model):
             data["member_name"] = self.linked_member.full_name
             data["team_id"] = self.linked_member.team_id
             data["team_name"] = self.linked_member.team.name if self.linked_member.team else None
+
+        if hasattr(self, "faculty_profile") and self.faculty_profile:
+            data["faculty_profile"] = self.faculty_profile.to_dict()
+            data["full_name"] = self.faculty_profile.full_name
+            data["must_change_password"] = self.faculty_profile.must_change_password
+        elif hasattr(self, "research_student_profile") and self.research_student_profile:
+            data["research_student_profile"] = self.research_student_profile.to_dict()
+            data["full_name"] = self.research_student_profile.full_name
+            data["must_change_password"] = self.research_student_profile.must_change_password
+        else:
+            data["must_change_password"] = self.credential_setup_status == "pending"
+
         return data
 
 

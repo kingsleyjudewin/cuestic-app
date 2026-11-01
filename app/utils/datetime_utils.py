@@ -8,6 +8,22 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def parse_iso_datetime(dt_str: str | None) -> datetime | None:
+    """Parse ISO 8601 string into a timezone-aware UTC datetime."""
+    if not dt_str:
+        return None
+    try:
+        cleaned = str(dt_str).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(cleaned)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
 def format_iso_utc(dt: datetime | None) -> str | None:
     """Format datetime as ISO 8601 string in UTC."""
     if dt is None:

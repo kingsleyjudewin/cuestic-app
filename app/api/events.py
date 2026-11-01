@@ -1,3 +1,4 @@
+import time
 from flask import Blueprint, request, g
 from datetime import timezone
 from app.extensions import db
@@ -9,10 +10,42 @@ from app.models.task_assignment import TaskAssignment
 from app.schemas.event import EventCreateSchema, EventUpdateSchema
 from app.utils.datetime_utils import utc_now
 from app.utils.permissions import token_required, leader_or_admin_required, admin_required
-from app.utils.errors import success_response, ValidationError, NotFoundError, validate_payload
+from app.utils.errors import success_response, ValidationError, NotFoundError, ConflictError, validate_payload
 from app.services.audit_service import AuditService
 
 events_bp = Blueprint("events", __name__)
+
+_EVENTS_CACHE = None
+_EVENTS_CACHE_AT = 0.0
+_EVENTS_CACHE_TTL = 1800.0
+
+
+def invalidate_events_cache():
+    global _EVENTS_CACHE, _EVENTS_CACHE_AT
+    _EVENTS_CACHE = None
+    _EVENTS_CACHE_AT = 0.0
+
+
+def _load_events_into_cache() -> list[dict]:
+    global _EVENTS_CACHE, _EVENTS_CACHE_AT
+    now = time.time()
+    if _EVENTS_CACHE is not None and (now - _EVENTS_CACHE_AT < _EVENTS_CACHE_TTL):
+        return _EVENTS_CACHE
+
+    from sqlalchemy.orm import joinedload
+    from sqlalchemy import func
+
+    events = Event.query.options(joinedload(Event.creator)).order_by(Event.start_at.asc()).all()
+    task_counts = dict(
+        db.session.query(Task.event_id, func.count(Task.id))
+        .group_by(Task.event_id)
+        .all()
+    )
+
+    data = [e.to_dict(task_count=task_counts.get(e.id, 0)) for e in events]
+    _EVENTS_CACHE = data
+    _EVENTS_CACHE_AT = now
+    return _EVENTS_CACHE
 
 
 @events_bp.route("", methods=["GET"])
@@ -36,11 +69,11 @@ def list_events():
         description: List of events
     """
     status = request.args.get("status")
-    query = Event.query
+    events = _load_events_into_cache()
     if status:
-        query = query.filter_by(status=status.strip().lower())
-    events = query.order_by(Event.start_at.asc()).all()
-    return success_response(data=[e.to_dict() for e in events])
+        st = status.strip().lower()
+        events = [e for e in events if e.get("status") == st]
+    return success_response(data=events)
 
 
 @events_bp.route("/<int:event_id>", methods=["GET"])
@@ -130,8 +163,16 @@ def create_event():
         if end_at < start_at:
             raise ValidationError("Event end_at cannot be earlier than start_at.")
 
+    event_name = data["name"].strip()
+    existing_event = Event.query.filter(
+        db.func.lower(Event.name) == event_name.lower(),
+        Event.status.in_([Event.STATUS_DRAFT, Event.STATUS_UPCOMING, Event.STATUS_ACTIVE])
+    ).first()
+    if existing_event:
+        raise ConflictError(f"An event named '{event_name}' already exists.")
+
     event = Event(
-        name=data["name"].strip(),
+        name=event_name,
         description=data.get("description", "").strip() if data.get("description") else None,
         start_at=start_at,
         end_at=end_at,
@@ -150,6 +191,7 @@ def create_event():
         details={"name": event.name, "start_at": start_at.isoformat()}
     )
     db.session.commit()
+    invalidate_events_cache()
 
     return success_response(data=event.to_dict(), message="Event created successfully.", status_code=201)
 
@@ -219,6 +261,7 @@ def update_event(event_id: int):
         details={"changes": list(data.keys())}
     )
     db.session.commit()
+    invalidate_events_cache()
 
     return success_response(data=event.to_dict(), message="Event updated successfully.")
 
@@ -257,6 +300,7 @@ def archive_event(event_id: int):
         actor_user_id=g.current_user.id,
     )
     db.session.commit()
+    invalidate_events_cache()
 
     return success_response(data=event.to_dict(), message="Event successfully marked as completed/archived.")
 

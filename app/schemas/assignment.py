@@ -16,6 +16,7 @@ class StatusUpdateSchema(Schema):
         ])
     )
     note = fields.String(required=False, allow_none=True)
+    completion_note = fields.String(required=False, allow_none=True)
 
 
 class CompleteAssignmentSchema(Schema):

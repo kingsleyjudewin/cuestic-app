@@ -21,10 +21,14 @@ instance/
 *.sqlite3
 *.db
 backups/
+database/backups/
 
 # Environment and secrets
 .env
 !.env.example
+*-firebase-adminsdk-*.json
+*.pem
+*.key
 
 # Distribution / packaging
 build/
@@ -33,3 +37,6 @@ dist/
 
 # Logs
 *.log
+.neon
+node_modules/
+.agents/

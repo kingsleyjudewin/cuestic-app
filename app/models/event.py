@@ -54,8 +54,9 @@ class Event(db.Model):
             )
         self.status = new_status
 
-    def to_dict(self) -> dict:
-        """Serialize event to dictionary."""
+    def to_dict(self, task_count: int | None = None) -> dict:
+        """Serialize event to dictionary with optional pre-aggregated task count."""
+        tc = task_count if task_count is not None else self.tasks.count()
         return {
             "id": self.id,
             "name": self.name,
@@ -66,7 +67,7 @@ class Event(db.Model):
             "status": self.status,
             "created_by": self.created_by,
             "creator_name": self.creator.username if self.creator else None,
-            "task_count": self.tasks.count(),
+            "task_count": tc,
             "created_at": format_iso_utc(self.created_at),
             "updated_at": format_iso_utc(self.updated_at),
         }

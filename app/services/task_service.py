@@ -9,6 +9,8 @@ from app.models.reminder import Reminder
 from app.utils.datetime_utils import utc_now
 from app.utils.errors import ValidationError, NotFoundError, ConflictError, PermissionDeniedError
 from app.services.audit_service import AuditService
+from app.services.notification_service import NotificationService
+
 
 
 class TaskService:
@@ -114,7 +116,15 @@ class TaskService:
                 details={"assigned_count": len(members), "event_id": event.id}
             )
             db.session.commit()
+
+            for a in task.assignments:
+                try:
+                    NotificationService.notify_new_assignment(a, actor_user)
+                except Exception:
+                    pass
+
             return task
+
 
         except Exception as e:
             db.session.rollback()
@@ -244,4 +254,10 @@ class TaskService:
             details={"previous_status": prev_status, "new_status": new_status, "note": note}
         )
         db.session.commit()
+
+        try:
+            NotificationService.notify_assignment_update(assignment, new_status)
+        except Exception:
+            pass
+
         return assignment

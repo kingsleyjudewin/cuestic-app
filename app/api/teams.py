@@ -1,3 +1,4 @@
+import time
 from flask import Blueprint, request, g
 from app.extensions import db
 from app.models.team import Team, slugify
@@ -9,6 +10,48 @@ from app.utils.errors import success_response, ValidationError, NotFoundError, C
 from app.services.audit_service import AuditService
 
 teams_bp = Blueprint("teams", __name__)
+
+_TEAMS_CACHE = None
+_TEAMS_CACHE_AT = 0.0
+_TEAMS_CACHE_TTL = 1800.0  # 30 minutes TTL
+
+
+def invalidate_teams_cache():
+    global _TEAMS_CACHE, _TEAMS_CACHE_AT
+    _TEAMS_CACHE = None
+    _TEAMS_CACHE_AT = 0.0
+
+
+def _load_teams_into_cache() -> list[dict]:
+    global _TEAMS_CACHE, _TEAMS_CACHE_AT
+    now = time.time()
+    if _TEAMS_CACHE is not None and (now - _TEAMS_CACHE_AT < _TEAMS_CACHE_TTL):
+        return _TEAMS_CACHE
+
+    from sqlalchemy import func
+    from sqlalchemy.orm import joinedload
+    teams = Team.query.options(joinedload(Team.leader)).filter_by(is_active=True).order_by(Team.name.asc()).all()
+    counts = dict(
+        db.session.query(Member.team_id, func.count(Member.id))
+        .filter(Member.is_active == True)
+        .group_by(Member.team_id)
+        .all()
+    )
+    data = []
+    for team in teams:
+        td = team.to_dict(include_counts=False)
+        td["member_count"] = counts.get(team.id, 0)
+        data.append(td)
+
+    _TEAMS_CACHE = data
+    _TEAMS_CACHE_AT = now
+    return _TEAMS_CACHE
+
+
+def get_user_led_team_ids(user: User) -> list[int]:
+    """Get IDs of teams led by this user without querying the database."""
+    teams = _load_teams_into_cache()
+    return [t["id"] for t in teams if t.get("leader_user_id") == user.id]
 
 
 @teams_bp.route("", methods=["GET"])
@@ -25,8 +68,8 @@ def list_teams():
       200:
         description: List of teams with member counts
     """
-    teams = Team.query.filter_by(is_active=True).order_by(Team.name.asc()).all()
-    return success_response(data=[team.to_dict(include_counts=True) for team in teams])
+    data = _load_teams_into_cache()
+    return success_response(data=data)
 
 
 @teams_bp.route("/<int:team_id>", methods=["GET"])
@@ -131,6 +174,7 @@ def create_team():
         details={"name": team.name, "slug": team.slug}
     )
     db.session.commit()
+    invalidate_teams_cache()
 
     return success_response(data=team.to_dict(include_counts=True), message="Team created successfully.", status_code=201)
 
@@ -206,6 +250,7 @@ def update_team(team_id: int):
         details={"changes": list(data.keys())}
     )
     db.session.commit()
+    invalidate_teams_cache()
 
     return success_response(data=team.to_dict(include_counts=True), message="Team updated successfully.")
 
@@ -232,17 +277,39 @@ def get_team_members(team_id: int):
       404:
         description: Team not found
     """
-    team = db.session.get(Team, team_id)
-    if not team:
-        raise NotFoundError(f"Team with ID {team_id} not found.")
+    from app.api.members import _load_all_members_into_cache
+    all_members = _load_all_members_into_cache()
 
-    members = Member.query.filter_by(team_id=team_id, is_active=True).order_by(Member.full_name.asc()).all()
+    global _TEAMS_CACHE
+    leader_user_id = None
+    if _TEAMS_CACHE:
+        team_dict = next((t for t in _TEAMS_CACHE if t["id"] == team_id), None)
+        if team_dict:
+            leader_user_id = team_dict.get("leader_user_id")
+        else:
+            team = db.session.get(Team, team_id)
+            if not team:
+                raise NotFoundError(f"Team with ID {team_id} not found.")
+            leader_user_id = team.leader_user_id
+    else:
+        team = db.session.get(Team, team_id)
+        if not team:
+            raise NotFoundError(f"Team with ID {team_id} not found.")
+        leader_user_id = team.leader_user_id
 
-    # Determine if current user is authorized to see phone numbers:
-    # Admin, president, or leader of this team
     user = g.current_user
     can_view_phones = user.is_admin() or (
-        user.is_team_leader() and team.leader_user_id == user.id
+        user.is_team_leader() and leader_user_id == user.id
     )
 
-    return success_response(data=[m.to_dict(include_sensitive=can_view_phones) for m in members])
+    team_members = []
+    for m in all_members:
+        if m.get("team_id") == team_id and m.get("is_active"):
+            item = dict(m)
+            if not can_view_phones and item.get("linked_user_id") != user.id:
+                phone = item.get("phone_number")
+                if phone:
+                    item["phone_number"] = phone[:3] + "*****" + phone[-4:] if len(phone) > 7 else "*****"
+            team_members.append(item)
+
+    return success_response(data=team_members)

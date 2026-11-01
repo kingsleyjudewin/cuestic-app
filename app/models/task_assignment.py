@@ -123,6 +123,8 @@ class TaskAssignment(db.Model):
                 self.started_at = now
         elif target_status == self.STATUS_SUBMITTED:
             self.submitted_at = now
+            if note:
+                self.completion_note = note
         elif target_status == self.STATUS_COMPLETED:
             self.completed_at = now
             if note:
@@ -149,6 +151,7 @@ class TaskAssignment(db.Model):
             "id": self.id,
             "task_id": self.task_id,
             "task_title": self.task.title if self.task else None,
+            "task_description": self.task.description if self.task else None,
             "task_priority": self.task.priority if self.task else None,
             "deadline": format_iso_utc(self.task.deadline) if self.task else None,
             "deadline_formatted": format_friendly_local(self.task.deadline) if self.task else None,

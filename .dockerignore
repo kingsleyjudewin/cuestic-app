@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+frontend
+mobile
+backups/*.sqlite
+database/backups/*.sqlite
+instance/*.db
+tests
+.agents

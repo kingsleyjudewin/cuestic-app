@@ -1,4 +1,5 @@
 from flask import Blueprint, request, g
+from app.extensions import db
 from app.models.task_assignment import TaskAssignment
 from app.models.task import Task
 from app.models.member import Member
@@ -91,6 +92,39 @@ def list_assignments():
     return success_response(data=[a.to_dict(include_sensitive=can_view_phones) for a in assignments])
 
 
+@assignments_bp.route("/me", methods=["GET"])
+@token_required
+def list_my_assignments():
+    """
+    Personal task assignments endpoint for the authenticated member.
+    """
+    user = g.current_user
+    member = user.linked_member
+    if not member:
+        raise NotFoundError("Your user account is not associated with any club member record.")
+
+    query = (
+        TaskAssignment.query
+        .options(
+            db.joinedload(TaskAssignment.task).joinedload(Task.event),
+            db.joinedload(TaskAssignment.member).joinedload(Member.team),
+        )
+        .filter(TaskAssignment.member_id == member.id)
+        .join(Task)
+        .order_by(Task.deadline.asc(), TaskAssignment.id.desc())
+    )
+    assignments = query.all()
+    return success_response(
+        data=[a.to_dict(include_sensitive=False) for a in assignments],
+        meta={
+            "member_id": member.id,
+            "member_name": member.full_name,
+            "team_id": member.team_id,
+            "team_name": member.team.name if member.team else None,
+        }
+    )
+
+
 @assignments_bp.route("/<int:assignment_id>", methods=["GET"])
 @token_required
 def get_assignment(assignment_id: int):
@@ -172,7 +206,7 @@ def patch_assignment_status(assignment_id: int):
         assignment=assignment,
         new_status=data["status"],
         actor_user=g.current_user,
-        note=data.get("note")
+        note=data.get("note") or data.get("completion_note")
     )
     return success_response(data=updated.to_dict(include_sensitive=True), message=f"Status updated to '{data['status']}'.")
 

@@ -1,9 +1,10 @@
 import os
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from app.config import config_by_name
 from app.extensions import db, migrate, cors, limiter, swagger
 from app.utils.errors import register_error_handlers
 from app.api import register_api_blueprints
+from app.cli import register_cli_commands
 
 
 def create_app(config_name: str = None) -> Flask:
@@ -19,15 +20,51 @@ def create_app(config_name: str = None) -> Flask:
     db.init_app(app)
     migrate.init_app(app, db)
     
-    # Configure CORS securely - never wildcard with credentials
+    # Configure CORS securely - support development, Flutter Web, and configurable origins
+    cors_origins = app.config.get("CORS_ORIGINS", "*")
+    if app.config.get("DEBUG") or app.config.get("FLASK_ENV") == "development":
+        if isinstance(cors_origins, list) and "*" not in cors_origins:
+            cors_origins = list(cors_origins) + [
+                r"^https?://localhost(:\d+)?$",
+                r"^https?://127\.0\.0\.1(:\d+)?$",
+                r"^https?://10\.\d+\.\d+\.\d+(:\d+)?$",
+                r"^https?://192\.168\.\d+\.\d+(:\d+)?$"
+            ]
+        elif cors_origins == "*":
+            cors_origins = "*"
+
     cors.init_app(
         app,
-        origins=app.config.get("CORS_ORIGINS", ["http://localhost:3000"]),
-        supports_credentials=False
+        resources={r"/*": {"origins": cors_origins}},
+        supports_credentials=False,
+        allow_headers=["Content-Type", "Authorization", "Accept", "X-Requested-With", "Origin"],
+        methods=["GET", "HEAD", "POST", "OPTIONS", "PUT", "PATCH", "DELETE"]
     )
     
-    # Configure rate limiter (disabled in testing)
-    if not app.config.get("TESTING"):
+    @app.before_request
+    def handle_preflight():
+        if request.method == "OPTIONS":
+            response = app.make_default_options_response()
+            origin = request.headers.get("Origin") or "*"
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Origin"
+            response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, POST, OPTIONS, PUT, PATCH, DELETE"
+            if request.headers.get("Access-Control-Request-Private-Network") == "true":
+                response.headers["Access-Control-Allow-Private-Network"] = "true"
+            return response
+
+    @app.after_request
+    def handle_pna_and_cors(response):
+        origin = request.headers.get("Origin") or "*"
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, X-Requested-With, Origin"
+        response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, POST, OPTIONS, PUT, PATCH, DELETE"
+        if request.headers.get("Access-Control-Request-Private-Network") == "true":
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+    
+    # Configure rate limiter (disabled in testing or when RATELIMIT_ENABLED is False)
+    if not app.config.get("TESTING") and app.config.get("RATELIMIT_ENABLED", True):
         limiter.init_app(app)
 
     # Configure Flasgger Swagger UI
@@ -38,6 +75,9 @@ def create_app(config_name: str = None) -> Flask:
 
     # Register API blueprints
     register_api_blueprints(app)
+
+    # Register CLI commands
+    register_cli_commands(app)
 
     # Root & Health Check routes
     @app.route("/", methods=["GET"])

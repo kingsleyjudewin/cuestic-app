@@ -1,4 +1,6 @@
-# Department Club Task Assignment Backend API
+# cuestic-app
+
+Department Club Task Assignment & Management Platform (Flask REST API + Flutter Mobile/Web Client)
 
 A production-minded, secure, and maintainable RESTful API backend designed for university departmental clubs to assign responsibilities to student members for events, track confirmations, generate user-controlled click-to-chat WhatsApp assignment messages, and automate task follow-up reminders.
 
@@ -77,15 +79,19 @@ cuestic-vp-app/
 │   │   ├── task_service.py
 │   │   ├── whatsapp_service.py
 │   │   ├── reminder_service.py
+│   │   ├── notification_service.py # FCM push notifications via trusted sender
 │   │   └── audit_service.py
 │   ├── schemas/              # Marshmallow request/response serialization & validation
 │   └── utils/                # Helper utilities (permissions, phones, datetimes, errors)
-├── migrations/               # Alembic database version control
-├── tests/                    # 56 automated pytest unit & integration tests
-├── scripts/
-│   ├── seed_data.py          # Idempotent development seeder
-│   ├── process_reminders.py  # CLI / Cron reminder runner
-│   └── backup_database.py    # Atomic SQLite backup & restore with 0600 permissions
+├── frontend/                 # Flutter client application (Android, iOS, Web)
+│   ├── lib/                  # Application modules (config, models, screens, services, widgets, utils)
+│   └── test/                 # Automated Flutter widget & unit tests
+├── database/                 # Centralized database management
+│   ├── migrations/           # Alembic / Flask-Migrate database version control
+│   ├── backups/              # Point-in-time database backups
+│   └── seeds/                # Seed data files
+├── tests/                    # Automated pytest unit & integration tests
+├── scripts/                  # Administrative CLI tools & operational scripts
 ├── .env.example              # Sample environment template
 ├── requirements.txt          # Python dependencies
 ├── pyproject.toml            # Build metadata & pytest configuration

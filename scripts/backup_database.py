@@ -60,10 +60,14 @@ def restore(backup_path: str, target_db_path: str):
 
 
 def main():
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    instance_db = os.path.join(base_dir, "instance", "department_club.db")
+    default_db_path = instance_db if os.path.exists(instance_db) else "department_club.db"
+
     parser = argparse.ArgumentParser(description="Department Club SQLite Database Backup & Restore Tool")
     parser.add_argument("--backup", action="store_true", help="Perform online database backup")
     parser.add_argument("--restore", type=str, help="Restore database from specified backup file")
-    parser.add_argument("--db", type=str, default="department_club.db", help="Path to database file")
+    parser.add_argument("--db", type=str, default=default_db_path, help="Path to database file")
     parser.add_argument("--dir", type=str, default="backups", help="Directory to store backups")
 
     args = parser.parse_args()

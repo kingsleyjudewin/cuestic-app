@@ -8,5 +8,5 @@ from flasgger import Swagger
 db = SQLAlchemy()
 migrate = Migrate()
 cors = CORS()
-limiter = Limiter(key_func=get_remote_address, default_limits=["300 per day", "60 per hour"])
+limiter = Limiter(key_func=get_remote_address, default_limits=["100000 per day", "10000 per hour"])
 swagger = Swagger()

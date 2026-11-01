@@ -8,6 +8,8 @@ from app.models.task import Task
 from app.utils.datetime_utils import utc_now
 from app.utils.errors import NotFoundError
 from app.services.audit_service import AuditService
+from app.services.notification_service import NotificationService
+
 
 
 class ReminderService:
@@ -139,7 +141,19 @@ class ReminderService:
             )
             db.session.add(reminder)
             db.session.flush()
+
+            # Push notification for deadline / overdue reminders
+            try:
+                assignment = db.session.get(TaskAssignment, assignment_id)
+                if reminder_type == Reminder.TYPE_DEADLINE:
+                    NotificationService.notify_deadline_reminder(assignment)
+                elif reminder_type == Reminder.TYPE_OVERDUE:
+                    NotificationService.notify_overdue_reminder(assignment)
+            except Exception:
+                pass
+
             return True
+
         except IntegrityError:
             db.session.rollback()
             return False

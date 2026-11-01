@@ -1,0 +1,58 @@
+[
+  {
+    "full_name": "Devananda Ajith",
+    "phone": "+91 82898 29614",
+    "class_section": "6BTEC",
+    "registration_number": null,
+    "is_ambiguous": false,
+    "notes": null
+  },
+  {
+    "full_name": "Jayani CU",
+    "phone": "+91 81483 11354",
+    "class_section": "4BTELCS",
+    "registration_number": null,
+    "is_ambiguous": false,
+    "notes": null
+  },
+  {
+    "full_name": "Pranavi Cuestic",
+    "phone": "+91 7397 735 899",
+    "class_section": "6BTEC",
+    "registration_number": null,
+    "is_ambiguous": false,
+    "notes": null
+  },
+  {
+    "full_name": "Sagar CU",
+    "phone": "+91 90087 62143",
+    "class_section": "6BTEC",
+    "registration_number": null,
+    "is_ambiguous": false,
+    "notes": null
+  },
+  {
+    "full_name": "Kanishk",
+    "phone": "+91 80892 81159",
+    "class_section": "6BTELCS",
+    "registration_number": null,
+    "is_ambiguous": true,
+    "notes": "Phone number mapping formatted with potential ambiguity in source text; single name without surname; missing registration number."
+  },
+  {
+    "full_name": "Sanjai",
+    "phone": "+91 77957 67522",
+    "class_section": "6BTEC",
+    "registration_number": null,
+    "is_ambiguous": false,
+    "notes": "Single name without surname; missing registration number."
+  },
+  {
+    "full_name": "Shohil Mathew",
+    "phone": "+91 94874 49346",
+    "class_section": "6BTEC",
+    "registration_number": null,
+    "is_ambiguous": false,
+    "notes": null
+  }
+]

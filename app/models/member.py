@@ -8,6 +8,7 @@ class Member(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     full_name = db.Column(db.String(150), nullable=False, index=True)
+    email = db.Column(db.String(120), nullable=True, index=True)
     registration_number = db.Column(db.String(50), unique=True, nullable=True, index=True)
     class_name = db.Column(db.String(50), nullable=False)
     section = db.Column(db.String(20), nullable=True)
@@ -29,7 +30,7 @@ class Member(db.Model):
         """Check if member has any historical task assignments."""
         return self.assignments.count() > 0
 
-    def to_dict(self, include_sensitive: bool = True) -> dict:
+    def to_dict(self, include_sensitive: bool = True, has_history: bool = None) -> dict:
         """
         Serialize member to dictionary.
         If include_sensitive is False, phone_number is masked for unauthorized viewers.
@@ -39,9 +40,12 @@ class Member(db.Model):
             # Mask phone number, e.g. +91*****43210
             phone = phone[:3] + "*****" + phone[-4:] if len(phone) > 7 else "*****"
 
+        effective_email = self.email or (self.linked_user.email if self.linked_user else None)
+
         return {
             "id": self.id,
             "full_name": self.full_name,
+            "email": effective_email,
             "registration_number": self.registration_number,
             "class_name": self.class_name,
             "section": self.section,
@@ -50,9 +54,18 @@ class Member(db.Model):
             "team_id": self.team_id,
             "team_name": self.team.name if self.team else None,
             "linked_user_id": self.linked_user_id,
+            "linked_user": {
+                "id": self.linked_user.id,
+                "username": self.linked_user.username,
+                "email": self.linked_user.email,
+                "role": self.linked_user.role,
+                "is_active": self.linked_user.is_active,
+                "account_status": "active" if self.linked_user.is_active else "inactive",
+                "credential_setup_status": self.linked_user.credential_setup_status or "completed",
+            } if self.linked_user else None,
             "whatsapp_opt_in": self.whatsapp_opt_in,
             "is_active": self.is_active,
-            "has_history": self.has_assignment_history(),
+            "has_history": has_history if has_history is not None else self.has_assignment_history(),
             "created_at": format_iso_utc(self.created_at),
             "updated_at": format_iso_utc(self.updated_at),
         }

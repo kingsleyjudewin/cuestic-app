@@ -23,12 +23,26 @@ def app():
 
 @pytest.fixture(autouse=True)
 def clean_db(app):
-    """Clean all tables between tests."""
+    """Clean all tables and in-memory caches between tests."""
     with app.app_context():
+        from app.utils.permissions import invalidate_token_cache
+        from app.api.members import invalidate_members_cache, invalidate_assignment_members_cache
+        from app.api.teams import invalidate_teams_cache
+        from app.services.documentation_service import DocumentationService
+        invalidate_token_cache()
+        invalidate_members_cache()
+        invalidate_assignment_members_cache()
+        invalidate_teams_cache()
+        DocumentationService.invalidate_cache()
         db.session.remove()
         db.drop_all()
         db.create_all()
         yield
+        invalidate_token_cache()
+        invalidate_members_cache()
+        invalidate_assignment_members_cache()
+        invalidate_teams_cache()
+        DocumentationService.invalidate_cache()
         db.session.rollback()
         db.session.remove()
 
@@ -37,6 +51,12 @@ def clean_db(app):
 def client(app):
     """Flask test client."""
     return app.test_client()
+
+
+@pytest.fixture
+def runner(app):
+    """Flask test CLI runner."""
+    return app.test_cli_runner()
 
 
 def create_user_with_token(username: str, role: str, email: str = None) -> tuple[User, str]:

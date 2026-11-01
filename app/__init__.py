@@ -18,7 +18,9 @@ def create_app(config_name: str = None) -> Flask:
 
     # Initialize extensions
     db.init_app(app)
-    migrate.init_app(app, db)
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    migrations_dir = os.path.join(base_dir, "database", "migrations")
+    migrate.init_app(app, db, directory=migrations_dir)
     
     # Configure CORS securely - support development, Flutter Web, and configurable origins
     cors_origins = app.config.get("CORS_ORIGINS", "*")

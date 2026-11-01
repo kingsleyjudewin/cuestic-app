@@ -68,7 +68,7 @@ def main():
     parser.add_argument("--backup", action="store_true", help="Perform online database backup")
     parser.add_argument("--restore", type=str, help="Restore database from specified backup file")
     parser.add_argument("--db", type=str, default=default_db_path, help="Path to database file")
-    parser.add_argument("--dir", type=str, default="backups", help="Directory to store backups")
+    parser.add_argument("--dir", type=str, default="database/backups", help="Directory to store backups")
 
     args = parser.parse_args()
 

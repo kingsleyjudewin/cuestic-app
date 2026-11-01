@@ -228,7 +228,7 @@ class GrokProvider(BaseAIProvider):
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.2,
-            "max_tokens": 2048,
+            "max_tokens": 950 if self.is_groq else 2048,
         }
 
         try:

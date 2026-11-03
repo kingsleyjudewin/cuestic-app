@@ -61,8 +61,16 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
 
   // Section 5: Annexures
   final List<String> _photoPaths = [];
+  final List<String> _photosBase64 = [];
   final List<String> _attendancePaths = [];
+  final List<String> _attendanceBase64 = [];
   String? _posterPath;
+
+  // Attendance OCR & Human Verification State
+  List<Map<String, dynamic>> _attendanceRecords = [];
+  Map<String, dynamic>? _attendanceSummary;
+  bool _isProcessingAttendance = false;
+  String? _classDistributionChartBase64;
 
   // Reference Poster & Vision Context
   Uint8List? _referencePosterBytes;
@@ -73,8 +81,61 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
   bool _isAnalyzingPoster = false;
   bool _includePosterContextInAi = true;
 
-  // Section 6: Feedback & Impact
+  // Section 6: E-Certificate Upload (Placed BEFORE Impact Analysis)
+  String? _certificateFilename;
+  String? _certificateBase64;
+  Uint8List? _certificateBytes;
+  final _certificateCategoryController = TextEditingController(text: 'Participation');
+  final _certificateDescriptionController = TextEditingController();
+  final _certificatesIssuedController = TextEditingController();
+  final _certificateRecipientInfoController = TextEditingController();
+
+  // Section 7: Impact Analysis (12 Configurable Questions)
   final _impactAnalysisController = TextEditingController();
+  final List<Map<String, String>> _impactQuestions = [
+    {'question': '1. How effectively did the activity address its stated objectives?', 'answer': 'The activity provided structured technical exposure, experiential problem-solving opportunities, and peer collaboration for participating engineering students.'},
+    {'question': '2. How many verified participants attended the activity?', 'answer': 'Verified unique participants attended the activity with recorded signatures.'},
+    {'question': '3. Which academic classes were represented?', 'answer': 'Participation was recorded across academic cohorts in the department.'},
+    {'question': '4. Did the activity provide exposure to the intended technical subject?', 'answer': 'Yes, participants engaged with domain-specific engineering principles, structured problem statements, and real-time execution scenarios.'},
+    {'question': '5. Did the activity provide opportunities for knowledge exchange?', 'answer': 'Yes, interactive discussions and group challenges facilitated collaborative knowledge transfer between participants and coordinators.'},
+    {'question': '6. Did the activity encourage student engagement?', 'answer': 'High engagement levels were observed throughout the session with active participant questions and competitive execution.'},
+    {'question': '7. Did the activity support practical or research-oriented learning?', 'answer': 'Yes, the activity emphasized analytical thinking, deductive reasoning, and hands-on application rather than passive theoretical instruction.'},
+    {'question': '8. Did the activity facilitate interaction with speakers or experts?', 'answer': 'Organizers, faculty coordinators, and student leads actively mentored teams during the session.'},
+    {'question': '9. Did the activity encourage interdisciplinary collaboration?', 'answer': 'The activity fostered cross-sectional teamwork among students from Electronics and Communication Engineering and associated cohorts.'},
+    {'question': '10. Did the activity provide insights into relevant industry or research practices?', 'answer': 'The problem statements reflected industry methodologies requiring agile problem solving, communication, and systematic verification.'},
+    {'question': '11. What key outcomes were documented during the activity?', 'answer': 'Documented outcomes include verified participant completion, peer interaction, and positive attainment of relevant engineering program outcomes.'},
+    {'question': '12. What follow-up opportunities or improvements were identified?', 'answer': 'Recommended follow-ups include organizing advanced continuation modules and expanding time allocations for complex analytical challenges.'},
+  ];
+
+  // Section 8: Feedback Analysis & Program Outcomes (PO1-PO12)
+  String? _feedbackFilename;
+  List<String> _feedbackHeaders = [];
+  List<dynamic> _feedbackRows = [];
+  final Map<String, String> _poColumnMapping = {};
+  Map<String, dynamic>? _feedbackAnalysisResult;
+  bool _isImportingFeedback = false;
+  bool _isAnalyzingFeedback = false;
+  bool _isGeneratingImpact = false;
+  bool _isGeneratingFeedback = false;
+  final Map<String, bool> _isRegeneratingPo = {};
+  int? _simulatedParticipantCount;
+  int _simulationSeed = DateTime.now().millisecondsSinceEpoch;
+  final _feedbackAnalysisController = TextEditingController();
+
+  static const Map<String, String> _poDefinitions = {
+    'PO1': 'Engineering Knowledge',
+    'PO2': 'Problem Analysis',
+    'PO3': 'Design/Development of Solutions',
+    'PO4': 'Conduct Investigations of Complex Problems',
+    'PO5': 'Modern Tool Usage',
+    'PO6': 'The Engineer and Society',
+    'PO7': 'Environment and Sustainability',
+    'PO8': 'Ethics',
+    'PO9': 'Individual and Team Work',
+    'PO10': 'Communication',
+    'PO11': 'Project Management and Finance',
+    'PO12': 'Life-long Learning',
+  };
 
   // ---------------------------------------------------------------------------
   // AI Copilot State & Multi-Model Engine
@@ -144,6 +205,11 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
     _organiserDesignationController.dispose();
     _organiserSignatureController.dispose();
     _impactAnalysisController.dispose();
+    _certificateCategoryController.dispose();
+    _certificateDescriptionController.dispose();
+    _certificatesIssuedController.dispose();
+    _certificateRecipientInfoController.dispose();
+    _feedbackAnalysisController.dispose();
     _aiInstructionController.dispose();
     super.dispose();
   }
@@ -234,10 +300,21 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
         _photoPaths.clear();
         _photoPaths.addAll(photos.map((e) => e.toString()));
       }
+      final photosB64 = annexures['photos_base64'] as List<dynamic>?;
+      if (photosB64 != null) {
+        _photosBase64.clear();
+        _photosBase64.addAll(photosB64.map((e) => e.toString()));
+      }
       final attendance = annexures['attendance_sheets'] as List<dynamic>? ?? annexures['attendance_pages'] as List<dynamic>?;
       if (attendance != null) {
         _attendancePaths.clear();
         _attendancePaths.addAll(attendance.map((e) => e.toString()));
+      }
+      final attendanceB64 = (annexures['attendance_sheets_base64'] as List<dynamic>?) ??
+          (annexures['attendance_pages_base64'] as List<dynamic>?);
+      if (attendanceB64 != null) {
+        _attendanceBase64.clear();
+        _attendanceBase64.addAll(attendanceB64.map((e) => e.toString()));
       }
       _posterPath = annexures['poster']?.toString() ?? annexures['poster_path']?.toString();
       if (_posterPath != null && _posterPath!.isNotEmpty) {
@@ -253,6 +330,65 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
       final savedPosterContext = data['reference_poster_context'] as Map<String, dynamic>?;
       if (savedPosterContext != null) {
         _extractedPosterContext = savedPosterContext;
+      }
+
+      // Attendance Summary & Verified Records
+      if (data['attendance_summary'] is Map) {
+        _attendanceSummary = Map<String, dynamic>.from(data['attendance_summary'] as Map);
+      }
+      if (data['attendance_records'] is List) {
+        _attendanceRecords = (data['attendance_records'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      if (data['class_chart_base64'] != null) {
+        _classDistributionChartBase64 = data['class_chart_base64'].toString();
+      }
+
+      // Certificate
+      final cert = annexures['certificate']?.toString() ??
+          annexures['certificate_base64']?.toString() ??
+          data['certificate']?.toString();
+      if (cert != null && cert.isNotEmpty) {
+        _certificateBase64 = cert;
+        _certificateFilename = annexures['certificate_filename']?.toString() ?? 'Certificate.png';
+      }
+      _certificateCategoryController.text = annexures['certificate_category']?.toString() ?? 'Participation';
+      _certificatesIssuedController.text = annexures['certificates_issued']?.toString() ?? '';
+      _certificateDescriptionController.text = annexures['certificate_description']?.toString() ?? '';
+      _certificateRecipientInfoController.text = annexures['certificate_recipient_info']?.toString() ?? '';
+
+      // Impact Questions
+      if (data['impact_questions'] is List) {
+        final savedQ = (data['impact_questions'] as List)
+            .whereType<Map>()
+            .map((e) => {
+                  'question': e['question']?.toString() ?? e['q']?.toString() ?? '',
+                  'answer': e['answer']?.toString() ?? e['a']?.toString() ?? '',
+                })
+            .where((e) => e['question']!.isNotEmpty)
+            .toList();
+        if (savedQ.isNotEmpty) {
+          _impactQuestions.clear();
+          _impactQuestions.addAll(savedQ);
+        }
+      }
+
+      // Feedback Analysis
+      _feedbackAnalysisController.text = data['feedback_analysis']?.toString() ?? '';
+      if (data['feedback_data'] is Map<String, dynamic>) {
+        _feedbackAnalysisResult = Map<String, dynamic>.from(data['feedback_data'] as Map);
+      } else if (data['po_results'] is Map) {
+        _feedbackAnalysisResult = {'po_results': Map<String, dynamic>.from(data['po_results'] as Map)};
+      }
+
+      if (data['is_simulated'] == true || (data['attendance_summary'] as Map?)?['is_simulated'] == true) {
+        _simulatedParticipantCount = data['verified_attendance_count'] as int? ??
+            (data['attendance_summary'] as Map?)?['total_verified_unique'] as int?;
+      }
+      if (data['simulation_seed'] is int) {
+        _simulationSeed = data['simulation_seed'] as int;
       }
 
       setState(() => _isLoading = false);
@@ -290,7 +426,19 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
         'key_takeaways': _keyTakeawaysController.text.trim(),
       },
       'speaker_profile': _speakerProfileController.text.trim(),
+      'attendance_summary': _attendanceSummary,
+      'attendance_records': _attendanceRecords,
+      'verified_attendance_count': _attendanceSummary?['total_verified_unique'],
+      'class_chart_base64': _classDistributionChartBase64,
+      'class_distribution': _attendanceSummary?['class_distribution'],
+      'certificate': _certificateBase64,
       'impact_analysis': _impactAnalysisController.text.trim(),
+      'impact_questions': _impactQuestions,
+      'feedback_analysis': _feedbackAnalysisController.text.trim(),
+      'po_results': _feedbackAnalysisResult?['po_results'],
+      'feedback_data': _feedbackAnalysisResult,
+      'is_simulated': _simulatedParticipantCount != null || (_attendanceSummary?['is_simulated'] == true),
+      'simulation_seed': _simulationSeed,
       'organiser': {
         'name': _organiserNameController.text.trim(),
         'designation': _organiserDesignationController.text.trim(),
@@ -303,13 +451,23 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
       },
       'annexures': {
         'photos': _photoPaths,
+        'photos_base64': _photosBase64,
         'attendance_sheets': _attendancePaths,
+        'attendance_sheets_base64': _attendanceBase64,
         'attendance_pages': _attendancePaths,
+        'attendance_pages_base64': _attendanceBase64,
         if (_posterPath != null) 'poster': _posterPath,
         if (_posterPath != null) 'poster_path': _posterPath,
         if (_referencePosterBytes != null) 'poster_base64': base64Encode(_referencePosterBytes!),
         if (_referencePosterDocId != null) 'poster_document_id': _referencePosterDocId,
         if (_referencePosterName != null) 'poster_filename': _referencePosterName,
+        if (_certificateBase64 != null) 'certificate': _certificateBase64,
+        if (_certificateBase64 != null) 'certificate_base64': _certificateBase64,
+        if (_certificateFilename != null) 'certificate_filename': _certificateFilename,
+        'certificate_category': _certificateCategoryController.text.trim(),
+        'certificates_issued': _certificatesIssuedController.text.trim(),
+        'certificate_description': _certificateDescriptionController.text.trim(),
+        'certificate_recipient_info': _certificateRecipientInfoController.text.trim(),
       },
       if (_extractedPosterContext != null) 'reference_poster_context': _extractedPosterContext,
     };
@@ -1220,6 +1378,499 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
         ),
       ),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attendance, Certificate, Impact & Feedback Operations
+  // ---------------------------------------------------------------------------
+  Future<void> _processAttendanceWithOcr() async {
+    if (_attendanceBase64.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please upload at least one attendance sheet before processing.')),
+      );
+      return;
+    }
+
+    setState(() => _isProcessingAttendance = true);
+
+    try {
+      final List<Map<String, dynamic>> accumulatedRecords = [];
+      Map<String, dynamic>? lastSummary;
+
+      for (int i = 0; i < _attendanceBase64.length; i++) {
+        final b64Str = _attendanceBase64[i];
+        final cleanB64 = b64Str.contains(',') ? b64Str.split(',').last : b64Str;
+        final rawBytes = base64Decode(cleanB64);
+        final fname = i < _attendancePaths.length ? _attendancePaths[i] : 'attendance_page_${i + 1}.png';
+
+        final result = await widget.docService.processAttendance(
+          fileBytes: rawBytes,
+          filename: fname,
+          existingRecords: accumulatedRecords,
+        );
+
+        if (result['records'] is List) {
+          final pageRecords = (result['records'] as List)
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+          accumulatedRecords.addAll(pageRecords);
+        }
+        if (result['summary'] is Map) {
+          lastSummary = Map<String, dynamic>.from(result['summary'] as Map);
+        }
+      }
+
+      setState(() {
+        _attendanceRecords = accumulatedRecords;
+        _attendanceSummary = lastSummary;
+      });
+
+      // Generate class distribution chart
+      if (lastSummary != null && lastSummary['class_distribution'] is List) {
+        final chartB64 = await widget.docService.generateClassChart(lastSummary['class_distribution'] as List);
+        if (chartB64 != null && mounted) {
+          setState(() => _classDistributionChartBase64 = chartB64);
+        }
+      }
+
+      // Auto-update Impact Analysis Questions with verified numbers
+      final verifiedCount = lastSummary?['total_verified_unique']?.toString() ?? '0';
+      final classDistList = lastSummary?['class_distribution'] as List? ?? [];
+      final classNames = classDistList.map((c) => c['class_name']?.toString() ?? '').where((c) => c.isNotEmpty).join(', ');
+
+      setState(() {
+        if (_impactQuestions.length >= 3) {
+          _impactQuestions[1]['answer'] = '$verifiedCount verified unique participants attended the activity with recorded signatures.';
+          _impactQuestions[2]['answer'] = 'Participation was recorded across academic cohorts including ${classNames.isNotEmpty ? classNames : "department cohorts"}.';
+        }
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Attendance verified: $verifiedCount participants counted across ${accumulatedRecords.length} detected rows.'),
+            backgroundColor: AppConstants.successGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to process attendance sheet: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessingAttendance = false);
+    }
+  }
+
+  Future<void> _toggleRecordSignature(int index) async {
+    if (index < 0 || index >= _attendanceRecords.length) return;
+    final rec = _attendanceRecords[index];
+    final currentSig = rec['signature_detected'] == true;
+    final newSig = !currentSig;
+
+    rec['signature_detected'] = newSig;
+    rec['confidence'] = 'High';
+    if (newSig && rec['status'] != 'Duplicate') {
+      rec['status'] = 'Verified';
+    } else if (!newSig) {
+      rec['status'] = 'Excluded';
+    }
+
+    try {
+      final res = await widget.docService.verifyAttendance(records: _attendanceRecords);
+      if (res['summary'] is Map && mounted) {
+        setState(() => _attendanceSummary = Map<String, dynamic>.from(res['summary'] as Map));
+      }
+    } catch (_) {
+      setState(() {});
+    }
+  }
+
+  void _editRecordRegistrationNumber(int index) {
+    if (index < 0 || index >= _attendanceRecords.length) return;
+    final rec = _attendanceRecords[index];
+    final controller = TextEditingController(text: rec['reg_no']?.toString() ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Edit Registration Number'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Registration Number',
+            hintText: 'e.g. 2460601',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final newReg = controller.text.trim();
+              if (newReg.isNotEmpty) {
+                rec['reg_no'] = newReg;
+                if (newReg.startsWith('2460')) {
+                  rec['mapped_class'] = '4BTEC';
+                } else if (newReg.startsWith('2462')) {
+                  rec['mapped_class'] = '4BTELCS';
+                } else if (newReg.startsWith('2360')) {
+                  rec['mapped_class'] = '6BTEC';
+                } else if (newReg.startsWith('2362')) {
+                  rec['mapped_class'] = '6BTELCS';
+                } else if (newReg.startsWith('2260')) {
+                  rec['mapped_class'] = '8BTEC';
+                } else if (newReg.startsWith('2262')) {
+                  rec['mapped_class'] = '8BTELCS';
+                } else {
+                  rec['mapped_class'] = 'Unmapped';
+                }
+
+                final res = await widget.docService.verifyAttendance(records: _attendanceRecords);
+                if (res['summary'] is Map && mounted) {
+                  setState(() => _attendanceSummary = Map<String, dynamic>.from(res['summary'] as Map));
+                }
+              }
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _excludeRecord(int index) async {
+    if (index < 0 || index >= _attendanceRecords.length) return;
+    _attendanceRecords[index]['status'] = 'Excluded';
+    _attendanceRecords[index]['signature_detected'] = false;
+    final res = await widget.docService.verifyAttendance(records: _attendanceRecords);
+    if (res['summary'] is Map && mounted) {
+      setState(() => _attendanceSummary = Map<String, dynamic>.from(res['summary'] as Map));
+    }
+  }
+
+  void _addManualAttendanceRecord() {
+    final regCtrl = TextEditingController();
+    final nameCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Participant Record'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: regCtrl, decoration: const InputDecoration(labelText: 'Registration Number', hintText: '2460...')),
+            const SizedBox(height: 8),
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Student Name')),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final reg = regCtrl.text.trim();
+              if (reg.isNotEmpty) {
+                String mappedClass = 'Unmapped';
+                if (reg.startsWith('2460')) {
+                  mappedClass = '4BTEC';
+                } else if (reg.startsWith('2462')) {
+                  mappedClass = '4BTELCS';
+                } else if (reg.startsWith('2360')) {
+                  mappedClass = '6BTEC';
+                } else if (reg.startsWith('2362')) {
+                  mappedClass = '6BTELCS';
+                }
+
+                setState(() {
+                  _attendanceRecords.add({
+                    'reg_no': reg,
+                    'student_name': nameCtrl.text.trim(),
+                    'signature_detected': true,
+                    'confidence': 'High',
+                    'status': 'Verified',
+                    'mapped_class': mappedClass,
+                    'is_duplicate': false,
+                    'page_number': 1,
+                  });
+                });
+
+                final res = await widget.docService.verifyAttendance(records: _attendanceRecords);
+                if (res['summary'] is Map && mounted) {
+                  setState(() => _attendanceSummary = Map<String, dynamic>.from(res['summary'] as Map));
+                }
+              }
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Add & Verify'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _uploadCertificateFile() async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg'],
+      );
+      if (files.isNotEmpty) {
+        final f = files.first;
+        final bytes = await f.readAsBytes();
+        final ext = (f.extension ?? 'png').toLowerCase();
+        final mime = ext == 'pdf' ? 'application/pdf' : 'image/$ext';
+        setState(() {
+          _certificateFilename = f.name;
+          _certificateBytes = bytes;
+          _certificateBase64 = 'data:$mime;base64,${base64Encode(bytes)}';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to load certificate: $e')));
+      }
+    }
+  }
+
+  Future<void> _importFeedbackFile() async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv', 'xlsx', 'xls', 'xml'],
+      );
+      if (files.isEmpty) return;
+
+      setState(() => _isImportingFeedback = true);
+      final f = files.first;
+      final bytes = await f.readAsBytes();
+
+      final result = await widget.docService.importFeedback(
+        fileBytes: bytes,
+        filename: f.name,
+      );
+
+      final headers = (result['headers'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      final rows = (result['rows'] as List?) ?? [];
+      final suggested = (result['suggested_mappings'] as Map?)?.map((k, v) => MapEntry(k.toString(), v.toString())) ?? {};
+
+      setState(() {
+        _feedbackFilename = f.name;
+        _feedbackHeaders = headers;
+        _feedbackRows = rows;
+        _poColumnMapping.clear();
+        _poColumnMapping.addAll(suggested);
+        _isImportingFeedback = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Loaded ${rows.length} feedback responses from ${f.name}.'),
+            backgroundColor: AppConstants.successGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isImportingFeedback = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to import feedback file: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _analyzeFeedbackPo() async {
+    if (_feedbackRows.isEmpty || _poColumnMapping.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please map at least one PO question before analyzing.')),
+      );
+      return;
+    }
+
+    setState(() => _isAnalyzingFeedback = true);
+    try {
+      final result = await widget.docService.analyzeFeedback(
+        rows: _feedbackRows,
+        poColumnMapping: _poColumnMapping,
+      );
+
+      setState(() {
+        _feedbackAnalysisResult = result;
+        if (result['interpretation'] != null && _feedbackAnalysisController.text.trim().isEmpty) {
+          _feedbackAnalysisController.text = result['interpretation'].toString();
+        }
+        _isAnalyzingFeedback = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('📊 Generated Google Forms style pie charts & PO distributions!'),
+            backgroundColor: AppConstants.successGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isAnalyzingFeedback = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Feedback analysis failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _generateSimulatedImpact() async {
+    setState(() => _isGeneratingImpact = true);
+    try {
+      final title = _titleController.text.trim().isNotEmpty ? _titleController.text.trim() : 'Department Activity';
+      final res = await widget.docService.generateSimulatedImpact(
+        activityTitle: title,
+        seed: _simulationSeed,
+      );
+
+      final count = res['participant_count'] as int? ?? 218;
+      final classDist = (res['class_distribution'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? [];
+      final chartB64 = res['class_chart_base64'] as String?;
+      final narrative = res['narrative']?.toString() ?? '';
+      final questions = (res['questions'] as List?)?.map((e) => {
+        'question': e['question']?.toString() ?? '',
+        'answer': e['answer']?.toString() ?? '',
+      }).toList() ?? [];
+
+      setState(() {
+        _simulatedParticipantCount = count;
+        _classDistributionChartBase64 = chartB64;
+        _impactAnalysisController.text = narrative;
+        if (questions.isNotEmpty) {
+          _impactQuestions.clear();
+          _impactQuestions.addAll(questions);
+        }
+        _attendanceSummary = {
+          'total_rows_detected': count,
+          'total_verified_unique': count,
+          'class_distribution': classDist,
+          'is_simulated': true,
+        };
+        _isGeneratingImpact = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✨ Impact Analysis simulated for $count participants across 8 cohorts!'),
+            backgroundColor: AppConstants.successGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isGeneratingImpact = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to simulate impact analysis: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _generateSimulatedFeedback() async {
+    setState(() => _isGeneratingFeedback = true);
+    try {
+      final count = _simulatedParticipantCount ?? (_attendanceSummary?['total_verified_unique'] as int?) ?? 224;
+      final title = _titleController.text.trim().isNotEmpty ? _titleController.text.trim() : 'Department Activity';
+      final res = await widget.docService.generateSimulatedFeedback(
+        participantCount: count,
+        activityTitle: title,
+        seed: _simulationSeed + 1,
+      );
+
+      setState(() {
+        _feedbackAnalysisResult = res;
+        _feedbackAnalysisController.text = res['overall_interpretation']?.toString() ?? '';
+        _isGeneratingFeedback = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('📊 Generated all 12 Programme Outcome pie charts & distributions!'),
+            backgroundColor: AppConstants.successGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isGeneratingFeedback = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to generate feedback charts: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _regenerateSinglePo(String poId) async {
+    setState(() => _isRegeneratingPo[poId] = true);
+    try {
+      final count = _simulatedParticipantCount ?? (_attendanceSummary?['total_verified_unique'] as int?) ?? 224;
+      final res = await widget.docService.generateSimulatedFeedback(
+        participantCount: count,
+        seed: DateTime.now().millisecondsSinceEpoch,
+        poId: poId,
+      );
+
+      setState(() {
+        if (_feedbackAnalysisResult != null && _feedbackAnalysisResult!['po_results'] is Map) {
+          final poMap = Map<String, dynamic>.from(_feedbackAnalysisResult!['po_results'] as Map);
+          poMap[poId] = res;
+          _feedbackAnalysisResult!['po_results'] = poMap;
+
+          if (_feedbackAnalysisResult!['summary_table'] is List) {
+            final sumList = List<Map<String, dynamic>>.from(
+              (_feedbackAnalysisResult!['summary_table'] as List).map((x) => Map<String, dynamic>.from(x as Map)),
+            );
+            for (var i = 0; i < sumList.length; i++) {
+              if (sumList[i]['po'] == poId) {
+                sumList[i] = {
+                  'po': poId,
+                  'po_title': res['po_title'],
+                  'excellent': res['counts']?['Excellent'] ?? 0,
+                  'very_good': res['counts']?['Very Good'] ?? 0,
+                  'fair': res['counts']?['Fair'] ?? 0,
+                  'satisfactory': res['counts']?['Satisfactory'] ?? 0,
+                  'total': count,
+                  'positive_pct': res['positive_percentage'] ?? 0,
+                };
+                break;
+              }
+            }
+            _feedbackAnalysisResult!['summary_table'] = sumList;
+          }
+        }
+        _isRegeneratingPo[poId] = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✨ Regenerated $poId chart and ratings!'),
+            backgroundColor: AppConstants.successGreen,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isRegeneratingPo[poId] = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to regenerate $poId: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2153,19 +2804,37 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
                       icon: const Icon(Icons.add_a_photo_outlined, size: 16),
                       label: const Text('Add Photos'),
                       onPressed: () async {
-                        final files = await FilePicker.pickFiles(
-                          type: FileType.image,
-                        );
-                        if (files.isNotEmpty) {
-                          setState(() {
+                        try {
+                          final files = await FilePicker.pickFiles(
+                            type: FileType.image,
+                          );
+                          if (files.isNotEmpty) {
                             for (var file in files) {
-                              if (file.path != null) {
-                                _photoPaths.add(file.path!);
-                              } else if (file.name.isNotEmpty) {
-                                _photoPaths.add(file.name);
+                              try {
+                                final bytes = await file.readAsBytes();
+                                final ext = (file.extension ?? 'png').toLowerCase();
+                                final b64 = 'data:image/$ext;base64,${base64Encode(bytes)}';
+                                setState(() {
+                                  _photoPaths.add(file.name);
+                                  _photosBase64.add(b64);
+                                });
+                              } catch (readErr) {
+                                setState(() {
+                                  if (file.path != null) {
+                                    _photoPaths.add(file.path!);
+                                  } else {
+                                    _photoPaths.add(file.name);
+                                  }
+                                });
                               }
                             }
-                          });
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Failed to load photos: $e')),
+                            );
+                          }
                         }
                       },
                     ),
@@ -2178,7 +2847,12 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
                       return Chip(
                         label: Text('Photo #${entry.key + 1}', style: const TextStyle(fontSize: 11)),
                         onDeleted: () {
-                          setState(() => _photoPaths.removeAt(entry.key));
+                          setState(() {
+                            _photoPaths.removeAt(entry.key);
+                            if (entry.key < _photosBase64.length) {
+                              _photosBase64.removeAt(entry.key);
+                            }
+                          });
                         },
                       );
                     }).toList(),
@@ -2194,25 +2868,69 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
                   children: [
                     Text('Attendance Sheets (${_attendancePaths.length} pages)',
                         style: const TextStyle(fontWeight: FontWeight.bold)),
-                    TextButton.icon(
-                      icon: const Icon(Icons.post_add_outlined, size: 16),
-                      label: const Text('Add Pages (>10 Pages)'),
-                      onPressed: () async {
-                        final files = await FilePicker.pickFiles(
-                          type: FileType.image,
-                        );
-                        if (files.isNotEmpty) {
-                          setState(() {
-                            for (var file in files) {
-                              if (file.path != null) {
-                                _attendancePaths.add(file.path!);
-                              } else if (file.name.isNotEmpty) {
-                                _attendancePaths.add(file.name);
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        TextButton.icon(
+                          icon: const Icon(Icons.post_add_outlined, size: 16),
+                          label: const Text('Add Pages (>10 Pages)'),
+                          onPressed: () async {
+                            try {
+                              final files = await FilePicker.pickFiles(
+                                type: FileType.custom,
+                                allowedExtensions: ['png', 'jpg', 'jpeg', 'webp', 'pdf'],
+                              );
+                              if (files.isNotEmpty) {
+                                for (var file in files) {
+                                  try {
+                                    final bytes = await file.readAsBytes();
+                                    final ext = (file.extension ?? 'png').toLowerCase();
+                                    final isPdf = ext == 'pdf' ||
+                                        (bytes.length >= 4 &&
+                                            bytes[0] == 0x25 &&
+                                            bytes[1] == 0x50 &&
+                                            bytes[2] == 0x44 &&
+                                            bytes[3] == 0x46);
+                                    final mime = isPdf ? 'application/pdf' : 'image/$ext';
+                                    final b64 = 'data:$mime;base64,${base64Encode(bytes)}';
+                                    setState(() {
+                                      _attendancePaths.add(file.name);
+                                      _attendanceBase64.add(b64);
+                                    });
+                                  } catch (readErr) {
+                                    setState(() {
+                                      if (file.path != null) {
+                                        _attendancePaths.add(file.path!);
+                                      } else {
+                                        _attendancePaths.add(file.name);
+                                      }
+                                    });
+                                  }
+                                }
+                              }
+                            } catch (e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Failed to load attendance sheets: $e')),
+                                );
                               }
                             }
-                          });
-                        }
-                      },
+                          },
+                        ),
+                        if (_attendanceBase64.isNotEmpty)
+                          ElevatedButton.icon(
+                            icon: _isProcessingAttendance
+                                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                : const Icon(Icons.document_scanner_outlined, size: 16),
+                            label: Text(_isProcessingAttendance ? 'Extracting...' : 'Process Attendance (AI/OCR)'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.black,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                            onPressed: _isProcessingAttendance ? null : _processAttendanceWithOcr,
+                          ),
+                      ],
                     ),
                   ],
                 ),
@@ -2223,11 +2941,197 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
                       return Chip(
                         label: Text('Sheet Page #${entry.key + 1}', style: const TextStyle(fontSize: 11)),
                         onDeleted: () {
-                          setState(() => _attendancePaths.removeAt(entry.key));
+                          setState(() {
+                            _attendancePaths.removeAt(entry.key);
+                            if (entry.key < _attendanceBase64.length) {
+                              _attendanceBase64.removeAt(entry.key);
+                            }
+                          });
                         },
                       );
                     }).toList(),
                   ),
+
+                // Attendance Verification UI (When records extracted)
+                if (_attendanceSummary != null || _attendanceRecords.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppConstants.borderLight),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Verified Attendance Summary', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            TextButton.icon(
+                              icon: const Icon(Icons.person_add_alt_outlined, size: 14),
+                              label: const Text('Add Participant', style: TextStyle(fontSize: 11)),
+                              onPressed: _addManualAttendanceRecord,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 8,
+                          children: [
+                            _buildStatBadge('Total Detected', '${_attendanceSummary?['total_rows_detected'] ?? _attendanceRecords.length}', Colors.black87),
+                            _buildStatBadge('Verified Unique', '${_attendanceSummary?['total_verified_unique'] ?? 0}', Colors.green.shade800),
+                            _buildStatBadge('Duplicates', '${_attendanceSummary?['duplicate_records'] ?? 0}', Colors.orange.shade800),
+                            _buildStatBadge('Excluded / No Signature', '${_attendanceSummary?['excluded_records'] ?? 0}', Colors.red.shade800),
+                            _buildStatBadge('Review Required', '${_attendanceSummary?['review_required_records'] ?? 0}', Colors.purple.shade800),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Human Verification Table
+                        const Text('Human Verification Table (Click to toggle signature or edit registration number):', style: TextStyle(fontSize: 11, color: AppConstants.textSecondary)),
+                        const SizedBox(height: 6),
+                        Container(
+                          constraints: const BoxConstraints(maxHeight: 280),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: AppConstants.borderLight),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.vertical,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: DataTable(
+                                headingRowHeight: 36,
+                                dataRowMinHeight: 32,
+                                dataRowMaxHeight: 40,
+                                columns: const [
+                                  DataColumn(label: Text('Reg No', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                  DataColumn(label: Text('Class', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                  DataColumn(label: Text('Signature', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                  DataColumn(label: Text('Confidence', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                  DataColumn(label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                  DataColumn(label: Text('Action', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                ],
+                                rows: _attendanceRecords.asMap().entries.map((entry) {
+                                  final idx = entry.key;
+                                  final rec = entry.value;
+                                  final hasSig = rec['signature_detected'] == true;
+                                  final status = rec['status']?.toString() ?? 'Unverified';
+
+                                  return DataRow(
+                                    cells: [
+                                      DataCell(
+                                        InkWell(
+                                          onTap: () => _editRecordRegistrationNumber(idx),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(rec['reg_no']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 11)),
+                                              const SizedBox(width: 4),
+                                              const Icon(Icons.edit, size: 11, color: Colors.grey),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                      DataCell(Text(rec['mapped_class']?.toString() ?? 'Unmapped', style: const TextStyle(fontSize: 11))),
+                                      DataCell(
+                                        InkWell(
+                                          onTap: () => _toggleRecordSignature(idx),
+                                          child: Chip(
+                                            visualDensity: VisualDensity.compact,
+                                            avatar: Icon(hasSig ? Icons.check_circle : Icons.cancel, size: 12, color: hasSig ? Colors.green : Colors.red),
+                                            label: Text(hasSig ? 'Yes' : 'No', style: TextStyle(fontSize: 10, color: hasSig ? Colors.green.shade800 : Colors.red.shade800)),
+                                            backgroundColor: (hasSig ? Colors.green : Colors.red).withValues(alpha: 0.1),
+                                          ),
+                                        ),
+                                      ),
+                                      DataCell(Text(rec['confidence']?.toString() ?? 'High', style: const TextStyle(fontSize: 11))),
+                                      DataCell(
+                                        Chip(
+                                          visualDensity: VisualDensity.compact,
+                                          label: Text(status, style: const TextStyle(fontSize: 10)),
+                                          backgroundColor: status == 'Verified' ? Colors.green.withValues(alpha: 0.15) : (status == 'Duplicate' ? Colors.orange.withValues(alpha: 0.15) : Colors.red.withValues(alpha: 0.1)),
+                                        ),
+                                      ),
+                                      DataCell(
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline, size: 14, color: Colors.red),
+                                          tooltip: 'Exclude Record',
+                                          onPressed: () => _excludeRecord(idx),
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // Class Distribution & Google Forms Pie Chart Preview
+                        if (_classDistributionChartBase64 != null || (_attendanceSummary?['class_distribution'] is List && (_attendanceSummary!['class_distribution'] as List).isNotEmpty)) ...[
+                          const SizedBox(height: 16),
+                          const Divider(),
+                          const Text('Class-Wise Attendance Distribution', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                flex: 3,
+                                child: Table(
+                                  border: TableBorder.all(color: AppConstants.borderLight),
+                                  children: [
+                                    const TableRow(
+                                      decoration: BoxDecoration(color: Color(0xFFF5F5F7)),
+                                      children: [
+                                        Padding(padding: EdgeInsets.all(6), child: Text('Academic Class', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                        Padding(padding: EdgeInsets.all(6), child: Text('Count', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                        Padding(padding: EdgeInsets.all(6), child: Text('Share (%)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                      ],
+                                    ),
+                                    ...((_attendanceSummary?['class_distribution'] as List? ?? []).map((c) {
+                                      return TableRow(
+                                        children: [
+                                          Padding(padding: const EdgeInsets.all(6), child: Text(c['class_name']?.toString() ?? '', style: const TextStyle(fontSize: 11))),
+                                          Padding(padding: const EdgeInsets.all(6), child: Text('${c['count'] ?? 0}', style: const TextStyle(fontSize: 11))),
+                                          Padding(padding: const EdgeInsets.all(6), child: Text('${c['percentage'] ?? 0}%', style: const TextStyle(fontSize: 11))),
+                                        ],
+                                      );
+                                    })),
+                                  ],
+                                ),
+                              ),
+                              if (_classDistributionChartBase64 != null) ...[
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  flex: 4,
+                                  child: Container(
+                                    height: 140,
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: AppConstants.borderLight),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Image.memory(
+                                        base64Decode(_classDistributionChartBase64!.split(',').last),
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
                 const Divider(height: 32),
 
                 // Poster Picker
@@ -2266,23 +3170,769 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
         ),
         const SizedBox(height: 24),
 
-        // Section 6: Impact & Feedback Analysis
-        _buildSectionHeader('6. Feedback & Impact Analysis', Icons.analytics_outlined),
+        // Section 6: E-Certificate Upload (Placed BEFORE Impact Analysis)
+        _buildSectionHeader('6. Sample E-Certificate', Icons.card_membership_outlined),
         const SizedBox(height: 12),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
-            child: _buildFieldWithAiTarget(
-              title: 'Impact Analysis (Master Template Section 7)',
-              fieldKey: 'impact_analysis',
-              controller: _impactAnalysisController,
-              hint: 'Summarize post-session survey metrics, participant satisfaction, learning efficacy...',
-              minLines: 4,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Upload sample e-certificate or combined certificate PDF issued to participants.',
+                  style: TextStyle(fontSize: 12, color: AppConstants.textSecondary),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.upload_file, size: 16),
+                      label: Text(_certificateFilename != null ? 'Change Certificate' : 'Upload E-Certificate (PDF/Image)'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: _uploadCertificateFile,
+                    ),
+                    if (_certificateFilename != null) ...[
+                      const SizedBox(width: 12),
+                      Chip(
+                        avatar: const Icon(Icons.check_circle, size: 14, color: Colors.green),
+                        label: Text(_certificateFilename!, style: const TextStyle(fontSize: 11)),
+                        onDeleted: () {
+                          setState(() {
+                            _certificateFilename = null;
+                            _certificateBytes = null;
+                            _certificateBase64 = null;
+                          });
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _certificateCategoryController,
+                        decoration: const InputDecoration(
+                          labelText: 'Certificate Category',
+                          hintText: 'e.g. Participation, Appreciation, Merit',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _certificatesIssuedController,
+                        decoration: const InputDecoration(
+                          labelText: 'Total Certificates Issued',
+                          hintText: 'e.g. 61',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _certificateDescriptionController,
+                  decoration: const InputDecoration(
+                    labelText: 'Certificate Description / Distribution Details',
+                    hintText: 'e.g. Distributed electronically via institutional portal following attendance verification.',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                if (_certificateBytes != null && _certificateFilename != null && !_certificateFilename!.toLowerCase().endsWith('.pdf')) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    height: 160,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppConstants.borderLight),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(_certificateBytes!, fit: BoxFit.contain),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+
+        // Section 7: Impact Analysis (12 Configurable Questions)
+        _buildSectionHeader('7. Impact Analysis', Icons.insights_outlined),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Top Action Bar with Simulation Indicator and Generate Button
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  alignment: WrapAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: Colors.purple.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.purple.withValues(alpha: 0.3)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.auto_awesome, size: 13, color: Colors.purple),
+                              SizedBox(width: 5),
+                              Text(
+                                'Simulated Impact Engine',
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.purple),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (_simulatedParticipantCount != null) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.05),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: AppConstants.borderLight),
+                            ),
+                            child: Text(
+                              '$_simulatedParticipantCount Simulated Attendees',
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    ElevatedButton.icon(
+                      icon: _isGeneratingImpact
+                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.bolt, size: 16),
+                      label: Text(_isGeneratingImpact
+                          ? 'Simulating...'
+                          : (_simulatedParticipantCount != null ? 'Regenerate Analysis' : 'Generate Impact Analysis')),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      ),
+                      onPressed: _isGeneratingImpact ? null : () {
+                        _simulationSeed = DateTime.now().millisecondsSinceEpoch;
+                        _generateSimulatedImpact();
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Class-wise Distribution: Chart + Table
+                if (_classDistributionChartBase64 != null || (_attendanceSummary?['class_distribution'] is List && (_attendanceSummary!['class_distribution'] as List).isNotEmpty)) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withValues(alpha: 0.03),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppConstants.borderLight),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.pie_chart_outline, size: 16, color: Colors.black87),
+                            SizedBox(width: 6),
+                            Text(
+                              'Class-wise Participant Distribution (8 Department Cohorts)',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final isWide = constraints.maxWidth > 650;
+                            final chartWidget = _classDistributionChartBase64 != null
+                                ? Container(
+                                    height: 180,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      border: Border.all(color: AppConstants.borderLight),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Image.memory(
+                                        base64Decode(_classDistributionChartBase64!.split(',').last),
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox.shrink();
+
+                            final classList = (_attendanceSummary?['class_distribution'] as List?)
+                                    ?.map((x) => Map<String, dynamic>.from(x as Map))
+                                    .toList() ??
+                                [];
+
+                            final tableWidget = Table(
+                              border: TableBorder.all(color: AppConstants.borderLight),
+                              children: [
+                                const TableRow(
+                                  decoration: BoxDecoration(color: Color(0xFFF5F5F7)),
+                                  children: [
+                                    Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Cohort', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                    Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Count', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                    Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Percentage', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                                  ],
+                                ),
+                                ...classList.map((item) {
+                                  return TableRow(
+                                    children: [
+                                      Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), child: Text('${item['class_name']}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500))),
+                                      Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), child: Text('${item['count']}', style: const TextStyle(fontSize: 11))),
+                                      Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), child: Text('${item['percentage']}%', style: const TextStyle(fontSize: 11))),
+                                    ],
+                                  );
+                                }),
+                              ],
+                            );
+
+                            if (isWide) {
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (_classDistributionChartBase64 != null)
+                                    Expanded(flex: 5, child: chartWidget),
+                                  if (_classDistributionChartBase64 != null)
+                                    const SizedBox(width: 14),
+                                  Expanded(flex: 6, child: tableWidget),
+                                ],
+                              );
+                            } else {
+                              return Column(
+                                children: [
+                                  if (_classDistributionChartBase64 != null) chartWidget,
+                                  const SizedBox(height: 10),
+                                  tableWidget,
+                                ],
+                              );
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // Participation Summary Narrative Field
+                _buildFieldWithAiTarget(
+                  title: 'Participation Summary & Narrative Interpretation',
+                  fieldKey: 'impact_analysis',
+                  controller: _impactAnalysisController,
+                  hint: 'Summarize attendance distribution, academic cohort representation, and learning outcomes...',
+                  minLines: 3,
+                ),
+                const SizedBox(height: 20),
+
+                // 12 Impact Questions
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Configurable Impact Analysis Questions (12 ABET / NBA Metrics):',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${_impactQuestions.length} Questions Drafted',
+                      style: const TextStyle(fontSize: 11, color: AppConstants.textSecondary),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Answers are automatically tailored to the simulated metrics and can be edited below:',
+                  style: TextStyle(fontSize: 11, color: AppConstants.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _impactQuestions.length,
+                  separatorBuilder: (ctx, i) => const SizedBox(height: 10),
+                  itemBuilder: (ctx, i) {
+                    final qObj = _impactQuestions[i];
+                    return Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.withValues(alpha: 0.04),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppConstants.borderLight),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(qObj['question'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                          const SizedBox(height: 6),
+                          TextFormField(
+                            key: ValueKey('ia_${i}_${qObj['answer']?.hashCode}'),
+                            initialValue: qObj['answer'],
+                            maxLines: null,
+                            minLines: 1,
+                            style: const TextStyle(fontSize: 12),
+                            decoration: const InputDecoration(
+                              labelText: 'Factual Response (Editable)',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (val) => _impactQuestions[i]['answer'] = val,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+
+        // Section 8: Feedback Analysis & PO1-PO12
+        _buildSectionHeader('8. Feedback Analysis & Program Outcomes (PO1–PO12)', Icons.pie_chart_outline_rounded),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Simulation Notice Banner
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 15, color: Colors.blue),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '[Simulated Data: Generated for activity planning and departmental documentation]',
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Primary Action Button Row
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      icon: _isGeneratingFeedback
+                          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.pie_chart_rounded, size: 16),
+                      label: Text(_isGeneratingFeedback
+                          ? 'Generating 12 Charts...'
+                          : (_feedbackAnalysisResult != null ? 'Regenerate 12 Feedback Charts' : 'Generate 12 Feedback Charts')),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                      ),
+                      onPressed: _isGeneratingFeedback ? null : () {
+                        _simulationSeed = DateTime.now().millisecondsSinceEpoch;
+                        _generateSimulatedFeedback();
+                      },
+                    ),
+                    if (_feedbackAnalysisResult != null && _feedbackAnalysisResult!['po_results'] is Map) ...[
+                      Chip(
+                        avatar: const Icon(Icons.check_circle, size: 15, color: Colors.green),
+                        label: Text(
+                          '12 PO Charts Active (${_feedbackAnalysisResult?['total_responses'] ?? 224} Responses)',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Overall Interpretation Field
+                _buildFieldWithAiTarget(
+                  title: 'Feedback Analysis Interpretation (Master Template Section 6)',
+                  fieldKey: 'feedback_analysis',
+                  controller: _feedbackAnalysisController,
+                  hint: 'Detailed narrative describing feedback attainment, key strengths, and academic development areas...',
+                  minLines: 3,
+                ),
+                const SizedBox(height: 20),
+
+                // Overall PO Summary Table
+                if (_feedbackAnalysisResult != null &&
+                    (_feedbackAnalysisResult!['summary_table'] is List || _feedbackAnalysisResult!['po_results'] is Map)) ...[
+                  _buildOverallPoSummaryTable(),
+                  const SizedBox(height: 24),
+                ],
+
+                // All 12 PO Cards
+                if (_feedbackAnalysisResult != null && _feedbackAnalysisResult!['po_results'] is Map) ...[
+                  const Text(
+                    'Programme Outcomes (PO1–PO12) Live Charts & Distributions:',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Google Forms style pie charts (Excellent: #109618, Very Good: #FF9900, Fair: #3366CC, Satisfactory: #DC3912)',
+                    style: TextStyle(fontSize: 11, color: AppConstants.textSecondary),
+                  ),
+                  const SizedBox(height: 14),
+                  _build12PoCardsList(),
+                ],
+
+                const SizedBox(height: 20),
+                const Divider(),
+                // Optional manual import expansion tile
+                Theme(
+                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.upload_file_outlined, size: 18, color: AppConstants.textSecondary),
+                    title: const Text(
+                      'Optional: Import Survey Responses from CSV/XLSX/XML file',
+                      style: TextStyle(fontSize: 12, color: AppConstants.textSecondary),
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8.0),
+                        child: _buildLegacyFeedbackImportWidget(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ),
         const SizedBox(height: 48),
       ],
+    );
+  }
+
+  Widget _buildOverallPoSummaryTable() {
+    List<Map<String, dynamic>> rows = [];
+    if (_feedbackAnalysisResult?['summary_table'] is List) {
+      rows = (_feedbackAnalysisResult!['summary_table'] as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    } else if (_feedbackAnalysisResult?['po_results'] is Map) {
+      final poMap = _feedbackAnalysisResult!['po_results'] as Map;
+      for (int i = 1; i <= 12; i++) {
+        final key = 'PO$i';
+        final d = poMap[key] as Map? ?? {};
+        final counts = d['counts'] as Map? ?? {};
+        final pcts = d['percentages'] as Map? ?? {};
+        rows.add({
+          'po': key,
+          'po_title': d['po_title'] ?? _poDefinitions[key] ?? key,
+          'excellent': counts['Excellent'] ?? 0,
+          'very_good': counts['Very Good'] ?? 0,
+          'fair': counts['Fair'] ?? 0,
+          'satisfactory': counts['Satisfactory'] ?? 0,
+          'total': d['total_responses'] ?? 0,
+          'positive_pct': d['positive_percentage'] ?? ((pcts['Excellent'] as num? ?? 0) + (pcts['Very Good'] as num? ?? 0)),
+        });
+      }
+    }
+
+    if (rows.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppConstants.borderLight),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF5F5F7),
+              borderRadius: BorderRadius.only(topLeft: Radius.circular(8), topRight: Radius.circular(8)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.table_chart_outlined, size: 16, color: Colors.black87),
+                SizedBox(width: 8),
+                Text(
+                  'Overall Programme Outcomes (PO1–PO12) Summary Table',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              headingRowHeight: 36,
+              dataRowMinHeight: 32,
+              dataRowMaxHeight: 36,
+              horizontalMargin: 12,
+              columnSpacing: 16,
+              headingRowColor: WidgetStateProperty.all(const Color(0xFFFBFBFD)),
+              columns: const [
+                DataColumn(label: Text('PO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                DataColumn(label: Text('Focus Title', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                DataColumn(label: Text('Excellent', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF109618)))),
+                DataColumn(label: Text('Very Good', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFFFF9900)))),
+                DataColumn(label: Text('Fair', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF3366CC)))),
+                DataColumn(label: Text('Satisfactory', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFFDC3912)))),
+                DataColumn(label: Text('Total', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                DataColumn(label: Text('Positive %', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+              ],
+              rows: rows.map((r) {
+                return DataRow(cells: [
+                  DataCell(Text('${r['po']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                  DataCell(Text('${r['po_title']}', style: const TextStyle(fontSize: 11))),
+                  DataCell(Text('${r['excellent']}', style: const TextStyle(fontSize: 11))),
+                  DataCell(Text('${r['very_good']}', style: const TextStyle(fontSize: 11))),
+                  DataCell(Text('${r['fair']}', style: const TextStyle(fontSize: 11))),
+                  DataCell(Text('${r['satisfactory']}', style: const TextStyle(fontSize: 11))),
+                  DataCell(Text('${r['total']}', style: const TextStyle(fontSize: 11))),
+                  DataCell(Text('${r['positive_pct']}%', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.green))),
+                ]);
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _build12PoCardsList() {
+    final poResults = _feedbackAnalysisResult!['po_results'] as Map;
+    final poKeys = List.generate(12, (i) => 'PO${i + 1}');
+
+    return Column(
+      children: poKeys.map((poKey) {
+        final poData = (poResults[poKey] as Map?) ?? {};
+        if (poData.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        final chartB64 = poData['chart_base64']?.toString();
+        final poTitle = poData['po_title'] ?? _poDefinitions[poKey] ?? poKey;
+        final poQuestion = poData['po_question']?.toString() ?? '';
+        final isRegen = _isRegeneratingPo[poKey] == true;
+
+        final questionText = poQuestion.isNotEmpty
+            ? (poQuestion.startsWith(poKey) ? poQuestion : '$poKey: $poQuestion')
+            : '$poKey: $poTitle';
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: AppConstants.borderLight),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. Question Title and Regenerate Action
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      questionText,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, height: 1.3),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    iconSize: 16,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                    tooltip: 'Regenerate $poKey Chart',
+                    icon: isRegen
+                        ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                        : const Icon(Icons.refresh, color: AppConstants.textSecondary),
+                    onPressed: isRegen ? null : () => _regenerateSinglePo(poKey),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // 2. Pie Chart (Only question and pie chart, nothing below)
+              if (chartB64 != null)
+                Center(
+                  child: Container(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border.all(color: AppConstants.borderLight),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.memory(
+                        base64Decode(chartB64.split(',').last),
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildLegacyFeedbackImportWidget() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            ElevatedButton.icon(
+              icon: _isImportingFeedback
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.file_upload_outlined, size: 16),
+              label: Text(_isImportingFeedback ? 'Importing...' : 'Import Feedback File'),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
+              onPressed: _isImportingFeedback ? null : _importFeedbackFile,
+            ),
+            if (_feedbackFilename != null) ...[
+              const SizedBox(width: 12),
+              Chip(
+                avatar: const Icon(Icons.check_circle, size: 14, color: Colors.green),
+                label: Text('$_feedbackFilename (${_feedbackRows.length} responses)', style: const TextStyle(fontSize: 11)),
+              ),
+            ],
+          ],
+        ),
+        if (_feedbackHeaders.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          const Text('Map Survey Questions to Program Outcomes (PO1–PO12):', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+          const SizedBox(height: 8),
+          Container(
+            constraints: const BoxConstraints(maxHeight: 240),
+            child: ListView(
+              shrinkWrap: true,
+              children: _poDefinitions.entries.map((e) {
+                final poKey = e.key;
+                final poDesc = e.value;
+                final currentVal = _poColumnMapping[poKey];
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: Text('$poKey: $poDesc', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 3,
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _feedbackHeaders.contains(currentVal) ? currentVal : null,
+                          isDense: true,
+                          style: const TextStyle(fontSize: 11, color: Colors.black),
+                          decoration: const InputDecoration(
+                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            border: OutlineInputBorder(),
+                            hintText: 'Select Column',
+                          ),
+                          items: [
+                            const DropdownMenuItem<String>(value: null, child: Text('None / Unmapped', style: TextStyle(fontSize: 11))),
+                            ..._feedbackHeaders.map((h) => DropdownMenuItem(value: h, child: Text(h, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)))),
+                          ],
+                          onChanged: (val) {
+                            setState(() {
+                              if (val == null) {
+                                _poColumnMapping.remove(poKey);
+                              } else {
+                                _poColumnMapping[poKey] = val;
+                              }
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            icon: _isAnalyzingFeedback
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.analytics_outlined, size: 16),
+            label: Text(_isAnalyzingFeedback ? 'Rendering Charts...' : 'Generate Google Forms Pie Charts & Distributions'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
+            onPressed: _isAnalyzingFeedback ? null : _analyzeFeedbackPo,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStatBadge(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: color)),
+          const SizedBox(height: 2),
+          Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color)),
+        ],
+      ),
     );
   }
 

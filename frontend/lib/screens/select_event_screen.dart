@@ -12,8 +12,12 @@ import '../widgets/state_views.dart';
 import 'create_event_screen.dart';
 import 'manage_members_screen.dart';
 import 'documentation_portal_screen.dart';
+import 'mc_dashboard_screen.dart';
+import 'media_dashboard_screen.dart';
+import 'faculty_dashboard_screen.dart';
 import 'community_screen.dart';
 import '../services/community_service.dart';
+import '../services/research_service.dart';
 
 class SelectEventScreen extends StatefulWidget {
   final SyncService syncService;
@@ -155,6 +159,55 @@ class _SelectEventScreenState extends State<SelectEventScreen> {
                     syncService: widget.syncService,
                     onLogout: widget.onLogout,
                     onSwitchToAdmin: () => Navigator.of(context).pop(),
+                  ),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            key: const Key('btn_mc_portal_appbar'),
+            icon: const Icon(Icons.mic_outlined, size: 20),
+            tooltip: 'MC & Anchors Dashboard',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => McDashboardScreen(
+                    authService: widget.authService,
+                    syncService: widget.syncService,
+                    onLogout: widget.onLogout,
+                    onSwitchToAdmin: () => Navigator.of(context).pop(),
+                  ),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            key: const Key('btn_media_portal_appbar'),
+            icon: const Icon(Icons.photo_camera_outlined, size: 20),
+            tooltip: 'Media Dashboard',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => MediaDashboardScreen(
+                    authService: widget.authService,
+                    syncService: widget.syncService,
+                    onLogout: widget.onLogout,
+                  ),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            key: const Key('btn_faculty_portal_appbar'),
+            icon: const Icon(Icons.school_outlined, size: 20),
+            tooltip: 'Faculty Research Portal',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => FacultyDashboardScreen(
+                    authService: widget.authService,
+                    researchService: ResearchService(widget.authService),
+                    onLogout: widget.onLogout,
                   ),
                 ),
               );

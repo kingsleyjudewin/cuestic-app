@@ -5,6 +5,10 @@ import logging
 from typing import Optional
 from flask import Blueprint, request, g, send_file, Response
 from app.services.documentation_service import DocumentationService
+from app.services.attendance_ocr_service import AttendanceOCRService
+from app.services.feedback_analysis_service import FeedbackAnalysisService
+from app.services.simulation_service import SimulationService
+from app.models.member import Member
 from app.services.ai_service import AIService, AIProviderNotConfiguredError, optimize_image_bytes, optimize_base64_image
 from app.utils.permissions import token_required
 from app.utils.errors import success_response, ValidationError
@@ -364,3 +368,238 @@ def save_report_to_folder(report_id: int):
         data=doc.to_dict(),
         message=f"Report DOCX successfully saved into event folder '{doc.folder.name}'."
     )
+
+
+# -----------------------------------------------------------------------------
+# Attendance Processing & Extraction Endpoints
+# -----------------------------------------------------------------------------
+@documentation_bp.route("/attendance/process", methods=["POST"])
+@token_required
+def process_attendance():
+    """
+    Process attendance sheets (PDF/Image) using OCR and verify signature presence.
+    Extracts registration numbers, signature detection status, and class mappings.
+    """
+    file_bytes = None
+    filename = "attendance_sheet"
+    existing_records = None
+
+    if "file" in request.files:
+        f = request.files["file"]
+        filename = f.filename or filename
+        file_bytes = f.read()
+    else:
+        payload = request.get_json(silent=True) or {}
+        filename = payload.get("filename", filename)
+        b64_str = payload.get("file_base64") or payload.get("image_base64")
+        existing_records = payload.get("existing_records")
+        if b64_str:
+            if ";base64," in b64_str:
+                b64_str = b64_str.split(";base64,")[1]
+            file_bytes = base64.b64decode(b64_str)
+
+    if not file_bytes:
+        raise ValidationError("No attendance file or base64 data provided.", details={"file": ["Required"]})
+
+    # Query Member student directory for mapped registration numbers
+    try:
+        member_dir = {
+            m.registration_number.strip(): m.class_name.strip()
+            for m in Member.query.filter(Member.registration_number.isnot(None)).all()
+            if m.registration_number and m.class_name
+        }
+    except Exception:
+        member_dir = {}
+
+    result = AttendanceOCRService.process_attendance_file(
+        file_bytes=file_bytes,
+        filename=filename,
+        member_directory=member_dir,
+        existing_records=existing_records,
+    )
+
+    if not result.get("success"):
+        raise ValidationError(result.get("error", "Failed to process attendance sheet."))
+
+    return success_response(
+        data=result,
+        message=f"Successfully processed {result.get('total_pages', 1)} page(s) with {len(result.get('records', []))} detected records."
+    )
+
+
+@documentation_bp.route("/attendance/verify", methods=["POST"])
+@token_required
+def verify_attendance_records():
+    """
+    Recompute attendance summary metrics and class distribution after manual user adjustments.
+    """
+    payload = request.get_json(silent=True) or {}
+    records = payload.get("records")
+    if records is None or not isinstance(records, list):
+        raise ValidationError("Records list is required.", details={"records": ["Must be a list"]})
+
+    summary = AttendanceOCRService.compute_attendance_summary(records)
+    return success_response(
+        data={
+            "records": records,
+            "summary": summary,
+        },
+        message="Attendance summary recomputed successfully."
+    )
+
+
+@documentation_bp.route("/attendance/class-chart", methods=["POST"])
+@token_required
+def generate_class_distribution_chart():
+    """
+    Generate Google Forms style pie chart for class distribution.
+    """
+    payload = request.get_json(silent=True) or {}
+    class_dist = payload.get("class_distribution") or []
+    _, chart_b64 = FeedbackAnalysisService.generate_class_distribution_pie_chart(class_dist)
+    return success_response(
+        data={"chart_base64": chart_b64},
+        message="Class distribution chart generated successfully."
+    )
+
+
+# -----------------------------------------------------------------------------
+# Feedback Analysis & PO Chart Endpoints
+# -----------------------------------------------------------------------------
+@documentation_bp.route("/feedback/import", methods=["POST"])
+@token_required
+def import_feedback_file():
+    """
+    Import feedback responses from CSV, Excel (.xlsx, .xls), or XML spreadsheet.
+    Returns column headers and auto-suggested PO1..PO12 mappings.
+    """
+    file_bytes = None
+    filename = "feedback"
+
+    if "file" in request.files:
+        f = request.files["file"]
+        filename = f.filename or filename
+        file_bytes = f.read()
+    else:
+        payload = request.get_json(silent=True) or {}
+        filename = payload.get("filename", filename)
+        b64_str = payload.get("file_base64")
+        if b64_str:
+            if ";base64," in b64_str:
+                b64_str = b64_str.split(";base64,")[1]
+            file_bytes = base64.b64decode(b64_str)
+
+    if not file_bytes:
+        raise ValidationError("No feedback file provided.", details={"file": ["Required"]})
+
+    parsed = FeedbackAnalysisService.parse_feedback_file(file_bytes, filename)
+    if not parsed.get("success"):
+        raise ValidationError(parsed.get("error", "Failed to parse feedback file."))
+
+    suggested_mappings = FeedbackAnalysisService.auto_suggest_po_mappings(parsed.get("headers", []))
+
+    return success_response(
+        data={
+            "filename": filename,
+            "headers": parsed.get("headers", []),
+            "total_rows": parsed.get("total_rows", 0),
+            "rows": parsed.get("rows", []),
+            "suggested_mappings": suggested_mappings,
+        },
+        message=f"Imported feedback file with {parsed.get('total_rows', 0)} response rows."
+    )
+
+
+@documentation_bp.route("/feedback/analyze", methods=["POST"])
+@token_required
+def analyze_feedback():
+    """
+    Analyze mapped PO feedback responses, generate Google Forms style pie charts,
+    and draft factual interpretation narrative.
+    """
+    payload = request.get_json(silent=True) or {}
+    rows = payload.get("rows") or []
+    po_mapping = payload.get("po_column_mapping") or {}
+
+    if not rows:
+        raise ValidationError("Rows data is required.", details={"rows": ["Required"]})
+
+    charts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "instance", "generated_charts"))
+    analysis = FeedbackAnalysisService.analyze_feedback(
+        rows=rows,
+        po_column_mapping=po_mapping,
+        output_dir=charts_dir,
+    )
+
+    return success_response(
+        data=analysis,
+        message=f"Feedback analysis generated for {analysis.get('mapped_pos_count', 0)} Program Outcomes."
+    )
+
+
+# -----------------------------------------------------------------------------
+# Simulation Mode Endpoints: Impact & 12 PO Feedback Charts
+# -----------------------------------------------------------------------------
+@documentation_bp.route("/simulate/impact", methods=["POST"])
+@token_required
+def simulate_impact_analysis():
+    """
+    Simulate participant count (200-230), class cohort distribution across the 8 classes,
+    Google Forms style Class pie chart, and answers to all 12 Impact Analysis questions.
+    """
+    payload = request.get_json(silent=True) or {}
+    activity_title = payload.get("activity_title") or "Department Club Activity"
+    participant_count = payload.get("participant_count")
+    seed = payload.get("seed")
+
+    charts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "instance", "generated_charts"))
+    res = SimulationService.generate_simulated_impact_analysis(
+        activity_title=activity_title,
+        participant_count=participant_count,
+        seed=seed,
+        output_dir=charts_dir,
+    )
+    return success_response(
+        data=res,
+        message=f"Simulated impact analysis generated for {res['participant_count']} participants across 8 cohorts."
+    )
+
+
+@documentation_bp.route("/simulate/feedback", methods=["POST"])
+@token_required
+def simulate_feedback_analysis():
+    """
+    Simulate feedback response distributions for all 12 Programme Outcomes (PO1–PO12)
+    or for a specific PO.
+    """
+    payload = request.get_json(silent=True) or {}
+    participant_count = payload.get("participant_count") or 224
+    activity_title = payload.get("activity_title") or "Department Club Activity"
+    seed = payload.get("seed")
+    po_id = payload.get("po_id")
+
+    charts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "instance", "generated_charts"))
+    if po_id:
+        single_res = SimulationService.generate_single_simulated_po(
+            po_id=po_id,
+            participant_count=int(participant_count),
+            seed=seed,
+            output_dir=charts_dir,
+        )
+        return success_response(
+            data=single_res,
+            message=f"Simulated feedback generated for {po_id}."
+        )
+
+    res = SimulationService.generate_simulated_feedback_analysis(
+        participant_count=int(participant_count),
+        activity_title=activity_title,
+        seed=seed,
+        output_dir=charts_dir,
+    )
+    return success_response(
+        data=res,
+        message=f"Generated 12 simulated Programme Outcome pie charts and distributions for {participant_count} respondents."
+    )
+
+

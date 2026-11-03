@@ -212,7 +212,10 @@ class DocumentationService extends ChangeNotifier {
   // DOCX Generation & Export
   // ---------------------------------------------------------------------------
   Future<Map<String, dynamic>> generateDocx(int reportId) async {
-    final res = await apiClient.post('/documentation/reports/$reportId/generate-docx');
+    final res = await apiClient.post(
+      '/documentation/reports/$reportId/generate-docx',
+      timeout: const Duration(seconds: 120),
+    );
     return res is Map<String, dynamic> ? res : {};
   }
 
@@ -229,5 +232,124 @@ class DocumentationService extends ChangeNotifier {
       body: {'folder_id': folderId},
     );
     return FolderDocument.fromJson(res as Map<String, dynamic>);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Automated Attendance Processing & Signature Verification
+  // ---------------------------------------------------------------------------
+  Future<Map<String, dynamic>> processAttendance({
+    required List<int> fileBytes,
+    required String filename,
+    List<Map<String, dynamic>>? existingRecords,
+  }) async {
+    final b64 = base64Encode(fileBytes);
+    final ext = filename.split('.').last.toLowerCase();
+    final mime = ext == 'pdf' ? 'application/pdf' : 'image/$ext';
+    final res = await apiClient.post(
+      '/documentation/attendance/process',
+      body: {
+        'filename': filename,
+        'file_base64': 'data:$mime;base64,$b64',
+        'existing_records': ?existingRecords,
+      },
+      timeout: const Duration(seconds: 120),
+    );
+    return res is Map<String, dynamic> ? res : {};
+  }
+
+  Future<Map<String, dynamic>> verifyAttendance({
+    required List<Map<String, dynamic>> records,
+  }) async {
+    final res = await apiClient.post(
+      '/documentation/attendance/verify',
+      body: {'records': records},
+    );
+    return res is Map<String, dynamic> ? res : {};
+  }
+
+  Future<String?> generateClassChart(List<dynamic> classDistribution) async {
+    final res = await apiClient.post(
+      '/documentation/attendance/class-chart',
+      body: {'class_distribution': classDistribution},
+    );
+    if (res is Map<String, dynamic>) {
+      return res['chart_base64'] as String?;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Feedback Analysis & PO Chart Generation
+  // ---------------------------------------------------------------------------
+  Future<Map<String, dynamic>> importFeedback({
+    required List<int> fileBytes,
+    required String filename,
+  }) async {
+    final b64 = base64Encode(fileBytes);
+    final res = await apiClient.post(
+      '/documentation/feedback/import',
+      body: {
+        'filename': filename,
+        'file_base64': 'data:application/octet-stream;base64,$b64',
+      },
+      timeout: const Duration(seconds: 60),
+    );
+    return res is Map<String, dynamic> ? res : {};
+  }
+
+  Future<Map<String, dynamic>> analyzeFeedback({
+    required List<dynamic> rows,
+    required Map<String, String> poColumnMapping,
+  }) async {
+    final res = await apiClient.post(
+      '/documentation/feedback/analyze',
+      body: {
+        'rows': rows,
+        'po_column_mapping': poColumnMapping,
+      },
+      timeout: const Duration(seconds: 90),
+    );
+    return res is Map<String, dynamic> ? res : {};
+  }
+
+  // ---------------------------------------------------------------------------
+  // Simulation Mode Methods: Impact Analysis & 12 PO Feedback Charts
+  // ---------------------------------------------------------------------------
+  Future<Map<String, dynamic>> generateSimulatedImpact({
+    String? activityTitle,
+    int? participantCount,
+    int? seed,
+  }) async {
+    final payload = <String, dynamic>{
+      'activity_title': ?activityTitle,
+      'participant_count': ?participantCount,
+      'seed': ?seed,
+    };
+    final res = await apiClient.post(
+      '/documentation/simulate/impact',
+      body: payload,
+      timeout: const Duration(seconds: 45),
+    );
+    return res is Map<String, dynamic> ? res : {};
+  }
+
+  Future<Map<String, dynamic>> generateSimulatedFeedback({
+    required int participantCount,
+    String? activityTitle,
+    int? seed,
+    String? poId,
+  }) async {
+    final payload = <String, dynamic>{
+      'participant_count': participantCount,
+      'activity_title': ?activityTitle,
+      'seed': ?seed,
+      'po_id': ?poId,
+    };
+    final res = await apiClient.post(
+      '/documentation/simulate/feedback',
+      body: payload,
+      timeout: const Duration(seconds: 90),
+    );
+    return res is Map<String, dynamic> ? res : {};
   }
 }

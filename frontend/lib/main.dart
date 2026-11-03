@@ -230,6 +230,11 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
       return FirstLoginPasswordScreen(
         authService: widget.authService,
         researchService: widget.researchService,
+        onPasswordChanged: () {
+          setState(() {});
+          widget.navigatorKey.currentState?.pushNamedAndRemoveUntil('/', (route) => false);
+        },
+        onLogout: _handleLogout,
       );
     }
 

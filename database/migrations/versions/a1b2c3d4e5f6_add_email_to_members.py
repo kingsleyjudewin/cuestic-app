@@ -17,9 +17,16 @@ depends_on = None
 
 
 def upgrade():
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_cols = [c['name'] for c in inspector.get_columns('members')]
+    existing_indexes = [i['name'] for i in inspector.get_indexes('members')]
+
     with op.batch_alter_table('members', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('email', sa.String(length=120), nullable=True))
-        batch_op.create_index(batch_op.f('ix_members_email'), ['email'], unique=False)
+        if 'email' not in existing_cols:
+            batch_op.add_column(sa.Column('email', sa.String(length=120), nullable=True))
+        if 'ix_members_email' not in existing_indexes:
+            batch_op.create_index(batch_op.f('ix_members_email'), ['email'], unique=False)
 
 
 def downgrade():

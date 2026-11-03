@@ -27,7 +27,7 @@ class ApiClient {
   final AuthService authService;
   String? _customBaseUrl;
 
-  static const Duration timeoutDuration = Duration(seconds: 15);
+  static const Duration timeoutDuration = Duration(seconds: 45);
 
   ApiClient({http.Client? client, required this.authService})
       : _client = client ?? http.Client();
@@ -62,7 +62,7 @@ class ApiClient {
     return headers;
   }
 
-  Future<dynamic> get(String endpoint, {Map<String, String>? queryParams, bool requiresAuth = true}) async {
+  Future<dynamic> get(String endpoint, {Map<String, String>? queryParams, bool requiresAuth = true, Duration? timeout}) async {
     final root = await baseUrl;
     var uri = Uri.parse('$root$endpoint');
     if (queryParams != null && queryParams.isNotEmpty) {
@@ -71,7 +71,7 @@ class ApiClient {
 
     try {
       final headers = await _headers(requiresAuth: requiresAuth);
-      final response = await _client.get(uri, headers: headers).timeout(timeoutDuration);
+      final response = await _client.get(uri, headers: headers).timeout(timeout ?? timeoutDuration);
       return _handleResponse(response);
     } on SocketException catch (_) {
       throw ApiException(
@@ -98,7 +98,7 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> post(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true}) async {
+  Future<dynamic> post(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true, Duration? timeout}) async {
     final root = await baseUrl;
     final uri = Uri.parse('$root$endpoint');
 
@@ -106,7 +106,7 @@ class ApiClient {
       final headers = await _headers(requiresAuth: requiresAuth);
       final response = await _client
           .post(uri, headers: headers, body: body != null ? jsonEncode(body) : null)
-          .timeout(timeoutDuration);
+          .timeout(timeout ?? timeoutDuration);
       return _handleResponse(response);
     } on SocketException catch (_) {
       throw ApiException(
@@ -132,7 +132,7 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> put(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true}) async {
+  Future<dynamic> put(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true, Duration? timeout}) async {
     final root = await baseUrl;
     final uri = Uri.parse('$root$endpoint');
 
@@ -140,7 +140,7 @@ class ApiClient {
       final headers = await _headers(requiresAuth: requiresAuth);
       final response = await _client
           .put(uri, headers: headers, body: body != null ? jsonEncode(body) : null)
-          .timeout(timeoutDuration);
+          .timeout(timeout ?? timeoutDuration);
       return _handleResponse(response);
     } on SocketException catch (_) {
       throw ApiException(
@@ -166,7 +166,7 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> patch(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true}) async {
+  Future<dynamic> patch(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true, Duration? timeout}) async {
     final root = await baseUrl;
     final uri = Uri.parse('$root$endpoint');
 
@@ -174,7 +174,7 @@ class ApiClient {
       final headers = await _headers(requiresAuth: requiresAuth);
       final response = await _client
           .patch(uri, headers: headers, body: body != null ? jsonEncode(body) : null)
-          .timeout(timeoutDuration);
+          .timeout(timeout ?? timeoutDuration);
       return _handleResponse(response);
     } on SocketException catch (_) {
       throw ApiException(
@@ -200,7 +200,7 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> delete(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true}) async {
+  Future<dynamic> delete(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true, Duration? timeout}) async {
     final root = await baseUrl;
     final uri = Uri.parse('$root$endpoint');
 
@@ -208,7 +208,7 @@ class ApiClient {
       final headers = await _headers(requiresAuth: requiresAuth);
       final response = await _client
           .delete(uri, headers: headers, body: body != null ? jsonEncode(body) : null)
-          .timeout(timeoutDuration);
+          .timeout(timeout ?? timeoutDuration);
       return _handleResponse(response);
     } on http.ClientException catch (e) {
       throw ApiException(

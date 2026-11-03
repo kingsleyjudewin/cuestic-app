@@ -5,11 +5,15 @@ import '../services/research_service.dart';
 class FirstLoginPasswordScreen extends StatefulWidget {
   final AuthService authService;
   final ResearchService researchService;
+  final VoidCallback? onPasswordChanged;
+  final VoidCallback? onLogout;
 
   const FirstLoginPasswordScreen({
     super.key,
     required this.authService,
     required this.researchService,
+    this.onPasswordChanged,
+    this.onLogout,
   });
 
   @override
@@ -56,6 +60,7 @@ class _FirstLoginPasswordScreenState extends State<FirstLoginPasswordScreen> {
             backgroundColor: Color(0xFF111827),
           ),
         );
+        widget.onPasswordChanged?.call();
       }
     } catch (e) {
       setState(() {
@@ -320,7 +325,13 @@ class _FirstLoginPasswordScreenState extends State<FirstLoginPasswordScreen> {
 
                     // Logout link
                     TextButton(
-                      onPressed: () => widget.authService.logout(),
+                      onPressed: () {
+                        if (widget.onLogout != null) {
+                          widget.onLogout!();
+                        } else {
+                          widget.authService.logout();
+                        }
+                      },
                       style: TextButton.styleFrom(foregroundColor: const Color(0xFF6B7280)),
                       child: const Text('Sign out and return to login', style: TextStyle(fontSize: 13)),
                     ),

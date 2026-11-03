@@ -474,7 +474,7 @@ class DocumentationService:
         filename = f"{safe_title}_{unique_id}.docx"
         output_filepath = os.path.join(reports_dir, filename)
 
-        # Image resolver reads storage path, base64, downloads, or local file
+        # Image resolver reads base64, direct path, local user directories, FolderDocument, MediaFile, or cloud storage
         def resolve_image(image_ref) -> Optional[bytes]:
             if not image_ref:
                 return None
@@ -487,45 +487,77 @@ class DocumentationService:
                     return None
 
                 clean_ref = image_ref.strip()
-                # If base64 string
-                if clean_ref.startswith("data:image") or (len(clean_ref) > 200 and "," in clean_ref[:100]):
-                    b64_clean = clean_ref.split(",", 1)[1]
+
+                # 1. Base64 encoded payload (with or without data URI header)
+                if clean_ref.startswith("data:") or (len(clean_ref) > 100 and "," in clean_ref[:100]):
+                    b64_part = clean_ref.split(",", 1)[1] if "," in clean_ref else clean_ref
+                    b64_clean = "".join(b64_part.split())
                     return base64.b64decode(b64_clean)
-                elif len(clean_ref) > 500 and " " not in clean_ref:
+                elif len(clean_ref) > 300 and ("/" in clean_ref or "+" in clean_ref) and not os.path.exists(clean_ref):
                     try:
-                        return base64.b64decode(clean_ref)
+                        b64_clean = "".join(clean_ref.split())
+                        return base64.b64decode(b64_clean)
                     except Exception:
                         pass
 
-                # If direct existing file path
+                # 2. Direct filesystem path
                 if os.path.exists(image_ref):
                     with open(image_ref, "rb") as f:
                         return f.read()
 
-                # If in user Downloads directory (e.g. 3.png)
-                downloads_path = os.path.join(os.path.expanduser("~"), "Downloads", image_ref)
-                if os.path.exists(downloads_path):
-                    with open(downloads_path, "rb") as f:
-                        return f.read()
-
-                # If in instance/uploads
-                inst_upload = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "instance", "uploads", image_ref))
-                if os.path.exists(inst_upload):
-                    with open(inst_upload, "rb") as f:
-                        return f.read()
-
-                # If matches a FolderDocument record
-                doc_record = FolderDocument.query.filter(
-                    (FolderDocument.filename == image_ref) | (FolderDocument.storage_path == image_ref)
-                ).first()
-                if doc_record and doc_record.storage_path:
-                    if os.path.exists(doc_record.storage_path):
-                        with open(doc_record.storage_path, "rb") as f:
+                # 3. Known user desktop and media directories (Screenshots, Downloads, Pictures, Desktop, Documents)
+                home_dir = os.path.expanduser("~")
+                candidate_dirs = [
+                    os.path.join(home_dir, "Downloads"),
+                    os.path.join(home_dir, "Music"),
+                    os.path.join(home_dir, "Pictures", "Screenshots"),
+                    os.path.join(home_dir, "Pictures"),
+                    os.path.join(home_dir, "Desktop"),
+                    os.path.join(home_dir, "Documents"),
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "instance", "uploads")),
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "instance", "storage")),
+                ]
+                for cdir in candidate_dirs:
+                    cand_path = os.path.join(cdir, image_ref)
+                    if os.path.exists(cand_path) and os.path.isfile(cand_path):
+                        with open(cand_path, "rb") as f:
                             return f.read()
-                    return FirebaseStorageService.get_file_bytes(doc_record.storage_path)
 
-                # Otherwise from Firebase storage
-                return FirebaseStorageService.get_file_bytes(image_ref)
+                # 4. Check FolderDocument record by original_filename or storage_path
+                try:
+                    doc_record = FolderDocument.query.filter(
+                        (FolderDocument.original_filename == image_ref) | (FolderDocument.storage_path == image_ref)
+                    ).first()
+                    if doc_record and doc_record.storage_path:
+                        if os.path.exists(doc_record.storage_path):
+                            with open(doc_record.storage_path, "rb") as f:
+                                return f.read()
+                        return FirebaseStorageService.get_file_bytes(doc_record.storage_path)
+                except Exception as doc_err:
+                    logger.debug("FolderDocument lookup notice for %s: %s", image_ref, doc_err)
+
+                # 5. Check MediaFile record
+                try:
+                    from app.models.media import MediaFile
+                    media_record = MediaFile.query.filter(
+                        (MediaFile.original_filename == image_ref) | (MediaFile.storage_path == image_ref)
+                    ).first()
+                    if media_record and media_record.storage_path:
+                        if os.path.exists(media_record.storage_path):
+                            with open(media_record.storage_path, "rb") as f:
+                                return f.read()
+                        return FirebaseStorageService.get_file_bytes(media_record.storage_path)
+                except Exception as med_err:
+                    logger.debug("MediaFile lookup notice for %s: %s", image_ref, med_err)
+
+                # 6. Fallback to Firebase Storage only if ref looks like a storage path
+                if "/" in image_ref or "." in image_ref:
+                    try:
+                        return FirebaseStorageService.get_file_bytes(image_ref)
+                    except Exception:
+                        pass
+
+                return None
             except Exception as e:
                 logger.warning("Could not resolve image %s: %s", image_ref, e)
                 return None

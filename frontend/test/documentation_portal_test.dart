@@ -12,7 +12,7 @@ class MockApiClient extends ApiClient {
   MockApiClient({required super.authService});
 
   @override
-  Future<dynamic> get(String endpoint, {Map<String, String>? queryParams, bool requiresAuth = true}) async {
+  Future<dynamic> get(String endpoint, {Map<String, String>? queryParams, bool requiresAuth = true, Duration? timeout}) async {
     if (endpoint == '/documentation/folders') {
       return [
         {
@@ -90,7 +90,7 @@ class MockApiClient extends ApiClient {
   }
 
   @override
-  Future<dynamic> post(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true}) async {
+  Future<dynamic> post(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true, Duration? timeout}) async {
     if (endpoint.contains('ai-assist')) {
       return {
         'generated_text': 'AI Generated formal summary of quantum workshop.',
@@ -102,7 +102,7 @@ class MockApiClient extends ApiClient {
   }
 
   @override
-  Future<dynamic> put(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true}) async {
+  Future<dynamic> put(String endpoint, {Map<String, dynamic>? body, bool requiresAuth = true, Duration? timeout}) async {
     return {'id': 1, 'title': body?['title'] ?? 'Updated', 'status': 'draft'};
   }
 }

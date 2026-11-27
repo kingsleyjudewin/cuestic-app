@@ -234,6 +234,7 @@ def test_visitor_still_cannot_create_scripts_or_templates(client, visitor, templ
 # real admin (role-specific portals, OAuth callbacks, query parameters that weren't supplied).
 _EXPECTED_REFUSALS = {
     "auth.verify_setup_token", "media.drive_auth_url", "media.drive_oauth_callback",
+    "media.drive_browse_folders",  # needs a Google Drive connection, which CI doesn't have
     "research.student_overview", "research.get_student_directory", "research.list_teams",
     "assignments.list_my_assignments", "me.get_my_assignments",
 }

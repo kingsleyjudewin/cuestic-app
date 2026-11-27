@@ -9,6 +9,7 @@ from app.models.member import Member
 from app.models.user import User
 from app.utils.errors import PermissionDeniedError, NotFoundError, ValidationError
 from app.utils.datetime_utils import utc_now, format_iso_utc
+from app.utils.visitor_mode import caching_allowed
 
 # In-Memory Fast Caches for Sub-Millisecond Retrieval
 _COMMUNITIES_CACHE = None
@@ -224,6 +225,9 @@ def _load_communities_into_cache() -> list[dict]:
     """Load all communities with eager-loaded channels and members in a single batched query."""
     global _COMMUNITIES_CACHE, _COMMUNITIES_CACHE_AT, _COMMUNITIES_MAP, _COMMUNITIES_PROVISIONED
     now = time.time()
+    if not caching_allowed():
+        # Visitor: every community query is empty and nothing may be provisioned or cached.
+        return []
     if _COMMUNITIES_CACHE is not None and (now - _COMMUNITIES_CACHE_AT < _COMMUNITIES_CACHE_TTL):
         return _COMMUNITIES_CACHE
 
@@ -328,7 +332,7 @@ def get_user_communities(user: User) -> list[dict]:
 def get_community(community_id: int, user: User, include_details: bool = True) -> dict:
     """Fetch single community details from in-memory cache in sub-millisecond time."""
     _load_communities_into_cache()
-    comm = _COMMUNITIES_MAP.get(community_id)
+    comm = _COMMUNITIES_MAP.get(community_id) if caching_allowed() else None
 
     if not comm:
         # Fallback to direct DB query if community was created externally
@@ -445,7 +449,7 @@ def get_channel_messages(
     get_community(community_id, user, include_details=False)
 
     # Check cache for initial page load
-    if before_id is None and channel_id in _CHANNEL_MESSAGES_CACHE:
+    if before_id is None and caching_allowed() and channel_id in _CHANNEL_MESSAGES_CACHE:
         return _CHANNEL_MESSAGES_CACHE[channel_id][-limit:]
 
     channel = CommunityChannel.query.filter_by(
@@ -467,7 +471,7 @@ def get_channel_messages(
     messages.reverse()
     res = [m.to_dict() for m in messages]
 
-    if before_id is None:
+    if before_id is None and caching_allowed():
         _CHANNEL_MESSAGES_CACHE[channel_id] = res
 
     return res

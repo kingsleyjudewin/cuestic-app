@@ -27,6 +27,8 @@ class AuthService extends ChangeNotifier {
   String get username => _currentUser?['username']?.toString() ?? 'User';
   String get userRole => _currentUser?['role']?.toString() ?? 'member';
   bool get isAdmin => userRole == 'president' || userRole == 'admin';
+  /// Shared demo login: admin screens on an empty, read-only workspace (enforced by the server).
+  bool get isVisitor => _currentUser?['is_visitor'] == true;
   bool get isTeamLeader => userRole == 'team_leader';
   bool get isFacultyCoordinator => userRole == 'faculty_coordinator';
   bool get isStudentResearcher => userRole == 'student_researcher';

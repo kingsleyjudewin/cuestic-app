@@ -1,0 +1,147 @@
+"""Visitor (demo) account: explores the admin UI on an empty, read-only workspace."""
+import re
+
+import pytest
+
+from app.extensions import db
+from app.models.event import Event
+from app.models.member import Member
+from app.models.team import Team
+from app.models.user import User
+from tests.conftest import create_user_with_token
+
+# Strings from the real (seeded) data that must never appear in a visitor response.
+REAL_DATA_MARKERS = ("Ananya", "Rohan", "Priya", "MAGNOVITE", "REG2026", "test_admin", "test_member", "9876500")
+
+
+@pytest.fixture
+def visitor(app):
+    user, token = create_user_with_token("visitor", User.ROLE_ADMIN)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    return {"user": user, "token": token, "headers": headers}
+
+
+@pytest.fixture
+def real_data(seed_members, sample_event, admin_user, client):
+    # Warm the shared in-memory caches with real data, as a real admin would in production.
+    for path in ("/api/v1/events", "/api/v1/members", "/api/v1/teams", "/api/v1/communities",
+                 "/api/v1/mc/events", "/api/v1/documentation/folders", "/api/v1/documentation/reports"):
+        client.get(path, headers=admin_user["headers"])
+    # Production uses a fresh session per request; drop the test's shared identity map so the
+    # visitor's queries really reach the database.
+    db.session.remove()
+    return {"admin": admin_user}
+
+
+def _items(resp):
+    data = resp.get_json()["data"]
+    return data.get("items", data) if isinstance(data, dict) else data
+
+
+def test_visitor_profile_looks_like_admin(client, visitor):
+    resp = client.get("/api/v1/auth/me", headers=visitor["headers"])
+    assert resp.status_code == 200
+    data = resp.get_json()["data"]
+    assert data["role"] == "admin"
+    assert data["is_visitor"] is True
+    assert data["password_change_required"] is False
+
+
+def test_real_admin_is_not_visitor(client, admin_user):
+    data = client.get("/api/v1/auth/me", headers=admin_user["headers"]).get_json()["data"]
+    assert data["is_visitor"] is False
+
+
+def test_visitor_login_returns_visitor_flag(client, visitor):
+    resp = client.post("/api/v1/auth/login", json={"username": "visitor", "password": "Password123!"})
+    assert resp.status_code == 200
+    assert resp.get_json()["data"]["user"]["is_visitor"] is True
+
+
+def test_visitor_sees_empty_workspace(client, visitor, real_data):
+    for path in ("/api/v1/events", "/api/v1/members", "/api/v1/teams", "/api/v1/mc/events",
+                 "/api/v1/communities"):
+        resp = client.get(path, headers=visitor["headers"])
+        assert resp.status_code == 200, (path, resp.get_json())
+        assert _items(resp) == [], path
+
+    dash = client.get("/api/v1/dashboard/summary", headers=visitor["headers"])
+    assert dash.status_code == 200
+    body = dash.get_data(as_text=True)
+    assert not any(m in body for m in REAL_DATA_MARKERS)
+
+
+def test_visitor_cannot_open_real_records(client, visitor, real_data, sample_event, seed_members):
+    event_id = db.session.query(Event.id).scalar()
+    member_id = db.session.query(Member.id).filter(Member.full_name == "Ananya Sharma").scalar()
+    db.session.remove()
+    assert client.get(f"/api/v1/events/{event_id}", headers=visitor["headers"]).status_code == 404
+    assert client.get(f"/api/v1/members/{member_id}", headers=visitor["headers"]).status_code == 404
+
+
+def test_visitor_writes_are_blocked_and_nothing_is_saved(client, visitor, real_data):
+    before = (Event.query.count(), Team.query.count(), Member.query.count())
+    db.session.remove()
+    attempts = [
+        ("post", "/api/v1/events", {"name": "Visitor Event", "start_at": "2030-01-01T10:00:00Z",
+                                    "end_at": "2030-01-02T10:00:00Z"}),
+        ("post", "/api/v1/teams", {"name": "Visitor Team"}),
+        ("post", "/api/v1/members", {"full_name": "Visitor Member", "phone_number": "+919999999999"}),
+        ("post", "/api/v1/auth/change-password", {"current_password": "Password123!",
+                                                  "new_password": "AnotherPass123!",
+                                                  "confirm_password": "AnotherPass123!"}),
+        ("patch", "/api/v1/events/1", {"name": "Hijacked"}),
+    ]
+    for method, path, payload in attempts:
+        resp = getattr(client, method)(path, json=payload, headers=visitor["headers"])
+        assert resp.status_code == 403, (path, resp.get_json())
+        assert resp.get_json()["error"]["code"] == "VISITOR_READ_ONLY"
+    assert (Event.query.count(), Team.query.count(), Member.query.count()) == before
+
+
+def test_visitor_does_not_poison_shared_caches(client, visitor, real_data):
+    admin = real_data["admin"]
+    for path in ("/api/v1/events", "/api/v1/members", "/api/v1/teams", "/api/v1/mc/events"):
+        client.get(path, headers=visitor["headers"])
+    db.session.remove()
+    r = client.get("/api/v1/events", headers=admin["headers"])
+    assert r.status_code == 200, r.get_json()
+    assert len(_items(r)) == 1
+    assert len(_items(client.get("/api/v1/members", headers=admin["headers"]))) >= 3
+    assert len(_items(client.get("/api/v1/teams", headers=admin["headers"]))) == 3
+    assert len(_items(client.get("/api/v1/mc/events", headers=admin["headers"]))) == 1
+
+
+def test_visitor_can_log_out(client, visitor):
+    resp = client.post("/api/v1/auth/logout", headers=visitor["headers"])
+    assert resp.status_code == 200
+    assert client.get("/api/v1/auth/me", headers=visitor["headers"]).status_code == 401
+
+
+def test_every_get_endpoint_is_safe_for_visitor(app, client, visitor, real_data):
+    """Crawl every GET route: no server errors and no real data in any response."""
+    failures = []
+    for rule in app.url_map.iter_rules():
+        if "GET" not in rule.methods or not rule.rule.startswith("/api/v1/") or "docs" in rule.rule:
+            continue
+        path = re.sub(r"<(?:int:)?[^>]+>", "1", rule.rule)
+        db.session.remove()
+        resp = client.get(path, headers=visitor["headers"])
+        body = resp.get_data(as_text=True)
+        if resp.status_code >= 500:
+            failures.append(f"{path}: HTTP {resp.status_code}")
+        leaked = [m for m in REAL_DATA_MARKERS if m in body]
+        if leaked:
+            failures.append(f"{path}: leaked {leaked}")
+    assert not failures, "\n".join(failures)
+
+
+def test_create_visitor_cli(app, runner):
+    result = runner.invoke(args=["create-visitor", "--password", "VisitorPass1!"])
+    assert result.exit_code == 0, result.output
+    user = User.query.filter_by(username="visitor").one()
+    assert user.role == User.ROLE_ADMIN and user.check_password("VisitorPass1!")
+
+    bad = runner.invoke(args=["create-visitor", "--username", "realadmin", "--password", "VisitorPass1!"])
+    assert bad.exit_code != 0
+    assert User.query.filter_by(username="realadmin").first() is None

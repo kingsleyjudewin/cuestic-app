@@ -661,6 +661,46 @@ def require_password_change_command(confirm, revert):
     click.echo(f"Done: {len(targets)} accounts {verb}. Other server processes pick this up on their next request.")
 
 
+@click.command("create-visitor")
+@click.option("--username", default="visitor", show_default=True,
+              help="Must be listed in VISITOR_USERNAMES (default setting: 'visitor').")
+@click.option("--password", prompt=True, hide_input=True, confirmation_prompt=True,
+              help="Password shared with visitors.")
+@with_appcontext
+def create_visitor_command(username, password):
+    """Create (or reset the password of) a read-only visitor account that explores the admin UI
+    on an empty workspace. See app/utils/visitor_mode.py."""
+    from flask import current_app
+    from app.extensions import db
+    from app.models.user import User
+    from app.utils.permissions import invalidate_token_cache
+    from app.utils.visitor_mode import visitor_usernames
+
+    username = username.strip()
+    if username.lower() not in visitor_usernames(current_app):
+        raise click.ClickException(
+            f"'{username}' is not in VISITOR_USERNAMES ({current_app.config.get('VISITOR_USERNAMES')!r}). "
+            "Add it there first, otherwise the account would be a real administrator."
+        )
+    if len(password) < 8:
+        raise click.ClickException("Use a password of at least 8 characters.")
+
+    user = User.query.filter(db.func.lower(User.username) == username.lower()).first()
+    created = user is None
+    if created:
+        user = User(username=username, role=User.ROLE_ADMIN)
+        db.session.add(user)
+    elif user.role != User.ROLE_ADMIN:
+        raise click.ClickException(f"User '{user.username}' exists with role '{user.role}'. Choose another username.")
+    user.set_password(password)
+    user.is_active = True
+    user.credential_setup_status = "completed"
+    user.password_change_required = False
+    db.session.commit()
+    invalidate_token_cache(user_id=user.id)
+    click.echo(f"Visitor account '{user.username}' {'created' if created else 'updated'}.")
+
+
 def register_cli_commands(app):
     """Register CLI commands with the Flask application."""
     app.cli.add_command(import_volunteers_command)
@@ -670,3 +710,4 @@ def register_cli_commands(app):
     app.cli.add_command(rotate_leaked_passwords_command)
     app.cli.add_command(require_password_change_command)
     app.cli.add_command(password_hashes_command)
+    app.cli.add_command(create_visitor_command)

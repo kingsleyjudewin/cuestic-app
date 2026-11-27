@@ -14,6 +14,7 @@ from app.services.geotag_service import GeotagService
 from app.services.google_drive_service import GoogleDriveService
 from app.utils.datetime_utils import utc_now, parse_iso_datetime
 from app.utils.errors import ValidationError, NotFoundError, PermissionDeniedError
+from app.utils.visitor_mode import caching_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +53,12 @@ class MediaService:
         """Fetch list of folder summaries directly from in-memory cache in sub-millisecond time."""
         cls.verify_access(user, "view event folders")
         now = time.time()
-        if not search_query and cls._cached_folders_data is not None and (now - cls._cached_folders_at < cls._cached_folders_ttl):
+        if not search_query and caching_allowed() and cls._cached_folders_data is not None and (now - cls._cached_folders_at < cls._cached_folders_ttl):
             return cls._cached_folders_data
 
         folders = cls.list_folders(user, search_query=search_query)
         data = [f.to_dict(include_documents=False, include_media=False) for f in folders]
-        if not search_query:
+        if not search_query and caching_allowed():
             cls._cached_folders_data = data
             cls._cached_folders_at = now
         return data

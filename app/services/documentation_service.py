@@ -16,6 +16,7 @@ from app.services.report_generator_service import ReportGeneratorService
 from app.services.audit_service import AuditService
 from app.utils.errors import ValidationError, NotFoundError, PermissionDeniedError
 from app.utils.datetime_utils import utc_now
+from app.utils.visitor_mode import caching_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ class DocumentationService:
     def get_documentation_team(cls) -> Team:
         """Fetch the Documentation team with in-memory TTL caching."""
         now = time.time()
-        if cls._cached_doc_team_id and (now - cls._cached_doc_team_at < 300):
+        if caching_allowed() and cls._cached_doc_team_id and (now - cls._cached_doc_team_at < 300):
             try:
                 team = db.session.get(Team, cls._cached_doc_team_id)
                 if team:
@@ -102,6 +103,8 @@ class DocumentationService:
         ).first()
         if not team:
             raise NotFoundError("Documentation team not found.")
+        if not caching_allowed():
+            return team
         cls._cached_doc_team_id = team.id
         cls._cached_doc_team_leader_id = team.leader_user_id
         cls._cached_doc_team_at = now
@@ -113,7 +116,7 @@ class DocumentationService:
         if user.is_admin():
             return True
 
-        if cls._cached_doc_team_leader_id and cls._cached_doc_team_leader_id == user.id:
+        if caching_allowed() and cls._cached_doc_team_leader_id and cls._cached_doc_team_leader_id == user.id:
             return True
 
         doc_team = cls.get_documentation_team()
@@ -136,11 +139,13 @@ class DocumentationService:
         """Fetch list of folder summaries directly from in-memory cache in sub-millisecond time."""
         cls.verify_access(user, "view event folders")
         now = time.time()
-        if cls._cached_folders_data is not None and (now - cls._cached_folders_at < 1800.0):
+        if caching_allowed() and cls._cached_folders_data is not None and (now - cls._cached_folders_at < 1800.0):
             return cls._cached_folders_data
 
         folders = cls.list_folders(user)
         data = [f.to_dict(include_documents=False) for f in folders]
+        if not caching_allowed():
+            return data
         cls._cached_folders_data = data
         cls._cached_folders_at = now
         return data
@@ -149,12 +154,14 @@ class DocumentationService:
     def get_folder_dict(cls, folder_id: int, user: User) -> dict:
         """Fetch single folder with documents from in-memory cache in sub-millisecond time."""
         cls.verify_access(user, "view this folder")
-        cached = cls._cached_folder_dict_by_id.get(folder_id)
+        cached = cls._cached_folder_dict_by_id.get(folder_id) if caching_allowed() else None
         if cached is not None:
             return cached
 
         folder = cls.get_folder_by_id(folder_id, user)
         data = folder.to_dict(include_documents=True)
+        if not caching_allowed():
+            return data
         cls._cached_folder_dict_by_id[folder_id] = data
         return data
 
@@ -163,11 +170,13 @@ class DocumentationService:
         """Fetch list of report summaries directly from in-memory cache in sub-millisecond time."""
         cls.verify_access(user, "list activity reports")
         now = time.time()
-        if cls._cached_reports_data is not None and (now - cls._cached_reports_at < 1800.0):
+        if caching_allowed() and cls._cached_reports_data is not None and (now - cls._cached_reports_at < 1800.0):
             return cls._cached_reports_data
 
         reports = cls.list_reports(user)
         data = [r.to_dict(include_data=False) for r in reports]
+        if not caching_allowed():
+            return data
         cls._cached_reports_data = data
         cls._cached_reports_at = now
         return data
@@ -176,12 +185,14 @@ class DocumentationService:
     def get_report_dict(cls, report_id: int, user: User) -> dict:
         """Fetch single activity report details from in-memory cache in sub-millisecond time."""
         cls.verify_access(user, "view this activity report")
-        cached = cls._cached_report_dict_by_id.get(report_id)
+        cached = cls._cached_report_dict_by_id.get(report_id) if caching_allowed() else None
         if cached is not None:
             return cached
 
         report = cls.get_report_by_id(report_id, user)
         data = report.to_dict(include_data=True)
+        if not caching_allowed():
+            return data
         cls._cached_report_dict_by_id[report_id] = data
         return data
 

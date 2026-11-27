@@ -12,6 +12,7 @@ from app.utils.datetime_utils import utc_now
 from app.utils.permissions import token_required, leader_or_admin_required, admin_required
 from app.utils.errors import success_response, ValidationError, NotFoundError, ConflictError, validate_payload
 from app.services.audit_service import AuditService
+from app.utils.visitor_mode import caching_allowed
 
 events_bp = Blueprint("events", __name__)
 
@@ -29,7 +30,7 @@ def invalidate_events_cache():
 def _load_events_into_cache() -> list[dict]:
     global _EVENTS_CACHE, _EVENTS_CACHE_AT
     now = time.time()
-    if _EVENTS_CACHE is not None and (now - _EVENTS_CACHE_AT < _EVENTS_CACHE_TTL):
+    if caching_allowed() and _EVENTS_CACHE is not None and (now - _EVENTS_CACHE_AT < _EVENTS_CACHE_TTL):
         return _EVENTS_CACHE
 
     from sqlalchemy.orm import joinedload
@@ -43,6 +44,8 @@ def _load_events_into_cache() -> list[dict]:
     )
 
     data = [e.to_dict(task_count=task_counts.get(e.id, 0)) for e in events]
+    if not caching_allowed():
+        return data
     _EVENTS_CACHE = data
     _EVENTS_CACHE_AT = now
     return _EVENTS_CACHE

@@ -100,6 +100,10 @@ class Config:
     # Optional regex for preview deployments, e.g. ^https://cuestic-[a-z0-9-]+\.vercel\.app$
     CORS_ORIGIN_REGEX = os.environ.get("CORS_ORIGIN_REGEX", "").strip() or None
 
+    # Visitor (demo) accounts: comma-separated usernames that explore the admin UI on an empty,
+    # read-only workspace. See app/utils/visitor_mode.py. Create one with `flask create-visitor`.
+    VISITOR_USERNAMES = os.environ.get("VISITOR_USERNAMES", "visitor")
+
     # Security headers / HTTPS
     ENABLE_HSTS = False
     TRUST_PROXY_HEADERS = _env_bool("TRUST_PROXY_HEADERS", False)

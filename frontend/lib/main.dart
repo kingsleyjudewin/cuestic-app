@@ -27,6 +27,7 @@ import 'services/storage_service.dart';
 import 'services/sync_service.dart';
 import 'services/whatsapp_service.dart';
 import 'services/research_service.dart';
+import 'widgets/visitor_mode_banner.dart';
 
 
 void main() async {
@@ -323,6 +324,22 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       navigatorKey: widget.navigatorKey,
+      builder: (context, child) => ListenableBuilder(
+        listenable: widget.authService,
+        builder: (context, _) => widget.authService.isAuthenticated && widget.authService.isVisitor
+            ? Column(children: [
+                const VisitorModeBanner(),
+                // The banner already covers the status bar, so screens below must not pad for it again.
+                Expanded(
+                  child: MediaQuery.removePadding(
+                    context: context,
+                    removeTop: true,
+                    child: child ?? const SizedBox.shrink(),
+                  ),
+                ),
+              ])
+            : (child ?? const SizedBox.shrink()),
+      ),
       home: _buildHomeScreen(),
       onGenerateRoute: (settings) {
         if (settings.name == '/' || settings.name == '/home') {

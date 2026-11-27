@@ -101,7 +101,9 @@ def run_checks():
     # 3. Authentication & User Login
     print("\n[3/7] Testing Authentication Flow...")
     admin_user = os.environ.get("ADMIN_USERNAME", "clubadmin")
-    admin_pass = os.environ.get("ADMIN_PASSWORD", "AdminPass123!Secure")
+    admin_pass = os.environ.get("ADMIN_PASSWORD")
+    if not admin_pass:
+        raise SystemExit("Set ADMIN_PASSWORD in the environment to run this verifier.")
     
     login_res = client.post(
         "/api/v1/auth/login",

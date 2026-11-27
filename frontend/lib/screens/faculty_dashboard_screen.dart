@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/password_policy.dart';
 import '../models/research.dart';
 import '../services/auth_service.dart';
 import '../services/research_service.dart';
@@ -2007,8 +2008,8 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
                                 setState(() => _profPassError = 'Please fill in current and new password.');
                                 return;
                               }
-                              if (nxt.length < 6) {
-                                setState(() => _profPassError = 'New password must be at least 6 characters.');
+                              if (PasswordPolicy.problems(nxt).isNotEmpty) {
+                                setState(() => _profPassError = 'New password needs: ${PasswordPolicy.problems(nxt).join(', ').toLowerCase()}.');
                                 return;
                               }
                               if (nxt != conf) {
@@ -2188,8 +2189,8 @@ class _FacultyDashboardScreenState extends State<FacultyDashboardScreen> {
                         setDialogState(() => dialogError = 'Please fill in all required password fields.');
                         return;
                       }
-                      if (nxt.length < 6) {
-                        setDialogState(() => dialogError = 'New password must be at least 6 characters.');
+                      if (PasswordPolicy.problems(nxt).isNotEmpty) {
+                        setDialogState(() => dialogError = 'New password needs: ${PasswordPolicy.problems(nxt).join(', ').toLowerCase()}.');
                         return;
                       }
                       if (nxt != conf) {

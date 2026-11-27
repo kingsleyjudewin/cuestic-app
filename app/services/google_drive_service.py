@@ -5,6 +5,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, BinaryIO
 import requests
+from flask import current_app
+from itsdangerous import URLSafeTimedSerializer
 from app.extensions import db
 from app.models.media import GoogleDriveIntegration
 from app.utils.datetime_utils import utc_now, format_iso_utc
@@ -14,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+OAUTH_STATE_MAX_AGE_SECONDS = 15 * 60
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 GOOGLE_DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
@@ -28,15 +31,24 @@ DEFAULT_SCOPES = [
 class GoogleDriveService:
     """Service handling official Google OAuth 2.0 authorization, Drive folder linking, and file operations."""
 
+    @staticmethod
+    def _state_serializer() -> URLSafeTimedSerializer:
+        return URLSafeTimedSerializer(current_app.config["SECRET_KEY"], salt="google-drive-oauth-state")
+
     @classmethod
     def get_client_config(cls) -> tuple[Optional[str], Optional[str], str]:
         """Fetch client ID, secret, and redirect URI from environment."""
         client_id = os.environ.get("GOOGLE_CLIENT_ID")
         client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
-        redirect_uri = os.environ.get(
-            "GOOGLE_REDIRECT_URI",
-            "http://localhost:5000/api/v1/media/drive/callback"
-        )
+        redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI")
+        if not redirect_uri:
+            # Derive from the current request (correct scheme/host behind Render via ProxyFix);
+            # fall back to the local development server outside a request.
+            from flask import has_request_context, request as _request
+            if has_request_context():
+                redirect_uri = _request.url_root.rstrip("/") + "/api/v1/media/drive/callback"
+            else:
+                redirect_uri = "http://localhost:5000/api/v1/media/drive/callback"
         return client_id, client_secret, redirect_uri
 
     @classmethod
@@ -60,7 +72,7 @@ class GoogleDriveService:
             )
 
         active_redirect = redirect_uri or default_redirect
-        state_data = json.dumps({"user_id": user_id, "timestamp": int(utc_now().timestamp())})
+        state_data = cls._state_serializer().dumps({"user_id": user_id})
 
         params = {
             "client_id": client_id,
@@ -88,10 +100,12 @@ class GoogleDriveService:
             raise ValidationError("Authorization code is missing from Google callback.")
 
         try:
-            state_data = json.loads(state_str)
+            # The state is signed with SECRET_KEY and expires, so a caller cannot
+            # forge another user's id and attach their own Drive to that account.
+            state_data = cls._state_serializer().loads(state_str or "", max_age=OAUTH_STATE_MAX_AGE_SECONDS)
             user_id = int(state_data.get("user_id"))
         except Exception:
-            raise ValidationError("Invalid or tampered OAuth state parameter.")
+            raise ValidationError("Invalid, expired, or tampered OAuth state parameter.")
 
         client_id, client_secret, default_redirect = cls.get_client_config()
         active_redirect = redirect_uri or default_redirect
@@ -174,10 +188,8 @@ class GoogleDriveService:
     @classmethod
     def get_service_account_token(cls) -> Optional[str]:
         """Fetch Google Drive access token using service account credentials if available."""
-        cred_path = os.environ.get("FIREBASE_CREDENTIALS_PATH")
-        if cred_path and not os.path.isabs(cred_path):
-            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            cred_path = os.path.join(base_dir, cred_path)
+        from app.services.firebase_storage_service import _resolve_credentials_path
+        cred_path = _resolve_credentials_path()
         if cred_path and os.path.exists(cred_path):
             try:
                 from google.oauth2 import service_account

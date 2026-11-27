@@ -1,0 +1,111 @@
+name: Android release APK
+
+# Builds a properly signed release APK pointing at the production API.
+#   * Every run uploads the APK as a workflow artifact (Actions → this run → Artifacts).
+#   * Pushing a tag like v1.0.1 also publishes a GitHub Release with the APK attached,
+#     giving a permanent download link.
+# Required repository settings (Settings → Secrets and variables → Actions):
+#   Variables: API_BASE_URL               https://cuestic-api.onrender.com/api/v1
+#   Secrets:   ANDROID_KEYSTORE_BASE64    base64 of the upload keystore (.jks)
+#              ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed only to publish the GitHub Release on tag pushes
+
+env:
+  FLUTTER_VERSION: "3.47.8"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check production API URL
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          case "$API_BASE_URL" in
+            https://*) echo "API_BASE_URL is set" ;;
+            *) echo "::error::Repository variable API_BASE_URL must be the HTTPS Render URL (…/api/v1)"; exit 1 ;;
+          esac
+          case "$API_BASE_URL" in
+            *localhost*|*127.0.0.1*|*10.0.2.2*) echo "::error::API_BASE_URL must not point to a local host"; exit 1 ;;
+          esac
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing. Refusing to build an unsigned/debug-signed release."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload-keystore.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/upload-keystore.jks" >> "$GITHUB_ENV"
+
+      - name: Compute version
+        id: version
+        run: |
+          name=$(grep '^version:' pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/')
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then name="${GITHUB_REF_NAME#v}"; fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "code=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          flutter build apk --release \
+            --build-name=${{ steps.version.outputs.name }} \
+            --build-number=${{ steps.version.outputs.code }} \
+            --dart-define=API_BASE_URL=${{ vars.API_BASE_URL }}
+          out="build/app/outputs/flutter-apk/cuestic-v${{ steps.version.outputs.name }}-${{ steps.version.outputs.code }}.apk"
+          mv build/app/outputs/flutter-apk/app-release.apk "$out"
+          echo "APK_PATH=frontend/$out" >> "$GITHUB_ENV"
+
+      - name: Verify APK is not debug-signed
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          certs=$("$apksigner" verify --print-certs "$GITHUB_WORKSPACE/$APK_PATH")
+          echo "$certs" | grep -E "Signer #1 certificate (DN|SHA-256)"
+          if echo "$certs" | grep -q "CN=Android Debug"; then echo "::error::APK is signed with the debug key"; exit 1; fi
+          rm -f "$RUNNER_TEMP/upload-keystore.jks"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cuestic-android-apk
+          path: ${{ env.APK_PATH }}
+          retention-days: 30
+
+      - name: Publish GitHub Release (tag pushes only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK_PATH }}
+          generate_release_notes: true

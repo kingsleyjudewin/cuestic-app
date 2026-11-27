@@ -7,6 +7,7 @@ import glob
 import logging
 from typing import List, Dict, Any, Tuple, Optional
 import cv2
+from app.utils.pdf_tools import is_pdf, pdf_to_png_pages
 import numpy as np
 from PIL import Image
 
@@ -61,32 +62,14 @@ class AttendanceOCRService:
         if not file_bytes:
             return []
 
-        # Check if PDF
-        if file_bytes[:5] == b"%PDF-":
+        # PDF: render pages with Poppler; raises a clear PdfConversionError if that is impossible.
+        if is_pdf(file_bytes):
             images = []
-            with tempfile.TemporaryDirectory() as tmpdir:
-                pdf_path = os.path.join(tmpdir, "attendance.pdf")
-                with open(pdf_path, "wb") as f:
-                    f.write(file_bytes)
-
-                prefix = os.path.join(tmpdir, "page")
-                try:
-                    subprocess.run(
-                        ["pdftoppm", "-png", "-r", "150", pdf_path, prefix],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        check=True,
-                        timeout=45,
-                    )
-                    page_files = sorted(glob.glob(os.path.join(tmpdir, "page-*.png")))
-                    for pf in page_files:
-                        img = cv2.imread(pf)
-                        if img is not None:
-                            images.append(img)
-                except Exception as err:
-                    logger.warning("pdftoppm conversion failed: %s", err)
-            if images:
-                return images
+            for png in pdf_to_png_pages(file_bytes, dpi=150, timeout=45):
+                img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
+                if img is not None:
+                    images.append(img)
+            return images
 
         # Single image format
         nparr = np.frombuffer(file_bytes, np.uint8)

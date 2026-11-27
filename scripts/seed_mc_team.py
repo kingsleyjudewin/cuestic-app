@@ -1,3 +1,4 @@
+import secrets
 """Seed MC Team accounts and members idempotently."""
 import sys
 import os
@@ -13,13 +14,17 @@ from app.services.member_service import MemberService
 from app.api.teams import invalidate_teams_cache
 from app.api.members import invalidate_members_cache
 
+# Initial password for newly seeded MC accounts: SEED_MEMBER_PASSWORD from the environment,
+# otherwise a random one (printed once). Users must change it at first login.
+SEED_MEMBER_PASSWORD = os.environ.get("SEED_MEMBER_PASSWORD") or secrets.token_urlsafe(12)
+
 MC_MEMBERS = [
     {
         "full_name": "John Victor",
         "username": "john.victor",
         "email": "john.victor@gmail.com",
         "role": User.ROLE_TEAM_LEADER,
-        "password": "MemberPass2026!",
+        "password": SEED_MEMBER_PASSWORD,
         "phone_number": "+919986383984",
         "registration_number": "MC2026001",
         "section": "Lead",
@@ -29,7 +34,7 @@ MC_MEMBERS = [
         "username": "mc_lead",
         "email": "mc.lead@cuestic.edu",
         "role": User.ROLE_TEAM_LEADER,
-        "password": "MemberPass2026!",
+        "password": SEED_MEMBER_PASSWORD,
         "phone_number": "+919876500051",
         "registration_number": "MC2026002",
         "section": "Lead",
@@ -39,7 +44,7 @@ MC_MEMBERS = [
         "username": "mc_anchor",
         "email": "mc.anchor@cuestic.edu",
         "role": User.ROLE_MEMBER,
-        "password": "MemberPass2026!",
+        "password": SEED_MEMBER_PASSWORD,
         "phone_number": "+919876500052",
         "registration_number": "MC2026003",
         "section": "Host / MC",
@@ -49,7 +54,7 @@ MC_MEMBERS = [
         "username": "merrick",
         "email": "merrick@gmail.com",
         "role": User.ROLE_MEMBER,
-        "password": "MemberPass2026!",
+        "password": SEED_MEMBER_PASSWORD,
         "phone_number": "+919022469808",
         "registration_number": "MC2026004",
         "section": "Anchor",
@@ -59,7 +64,7 @@ MC_MEMBERS = [
         "username": "afra",
         "email": "afra@gmail.com",
         "role": User.ROLE_MEMBER,
-        "password": "MemberPass2026!",
+        "password": SEED_MEMBER_PASSWORD,
         "phone_number": "+919845314703",
         "registration_number": "MC2026005",
         "section": "Anchor",
@@ -69,7 +74,7 @@ MC_MEMBERS = [
         "username": "abishek.cu",
         "email": "abishek.cu@gmail.com",
         "role": User.ROLE_MEMBER,
-        "password": "MemberPass2026!",
+        "password": SEED_MEMBER_PASSWORD,
         "phone_number": "+917338796125",
         "registration_number": "MC2026006",
         "section": "Anchor",
@@ -79,7 +84,7 @@ MC_MEMBERS = [
         "username": "prarthana.venkatesh",
         "email": "prarthana.venkatesh@gmail.com",
         "role": User.ROLE_MEMBER,
-        "password": "MemberPass2026!",
+        "password": SEED_MEMBER_PASSWORD,
         "phone_number": "+919964697363",
         "registration_number": "MC2026007",
         "section": "Anchor",
@@ -135,11 +140,13 @@ def seed_mc_accounts():
                 created_count += 1
                 print(f" [+] Created user '{user.username}' and linked member '{member.full_name}'")
             else:
-                # Update existing user role and password
+                # Update existing user role. Passwords are only reset when explicitly requested,
+                # so re-running the seed never undoes a password rotation.
                 user.role = rec["role"]
-                user.set_password(rec["password"])
+                if os.environ.get("SEED_RESET_PASSWORDS", "").lower() == "true":
+                    user.set_password(rec["password"])
+                    user.credential_setup_status = "pending"
                 user.is_active = True
-                user.credential_setup_status = "completed"
                 # Check member link
                 if not user.linked_member:
                     member = Member(
@@ -173,6 +180,8 @@ def seed_mc_accounts():
         invalidate_teams_cache()
         invalidate_members_cache()
         print(f"\nCompleted! Created: {created_count}, Updated: {updated_count}")
+        if created_count and not os.environ.get("SEED_MEMBER_PASSWORD"):
+            print(f"Initial password for newly created accounts (share privately): {SEED_MEMBER_PASSWORD}")
         print(f"MC Team now has {mc_team.members.count()} members.")
 
 if __name__ == "__main__":

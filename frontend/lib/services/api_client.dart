@@ -44,6 +44,7 @@ class ApiClient {
   }
 
   void updateBaseUrl(String newUrl) {
+    if (!ApiConfig.allowServerOverride) return;
     _customBaseUrl = newUrl.endsWith('/') ? newUrl.substring(0, newUrl.length - 1) : newUrl;
   }
 
@@ -324,6 +325,15 @@ class ApiClient {
         details: details,
       );
     } else if (response.statusCode == 403) {
+      if (errorCode == 'PASSWORD_CHANGE_REQUIRED') {
+        authService.markPasswordChangeRequired();
+        throw ApiException(
+          statusCode: 403,
+          code: 'PASSWORD_CHANGE_REQUIRED',
+          message: errorMessage,
+          details: details,
+        );
+      }
       throw ApiException(
         statusCode: 403,
         code: 'FORBIDDEN',

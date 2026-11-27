@@ -10,6 +10,9 @@ class LoginSchema(Schema):
 class ChangePasswordSchema(Schema):
     current_password = fields.String(required=True, validate=validate.Length(min=1, max=128))
     new_password = fields.String(required=True, validate=validate.Length(min=1, max=128))
+    # Required by current clients; optional so older app builds keep working.
+    confirm_password = fields.String(required=False, validate=validate.Length(max=128))
+    device_name = fields.String(required=False, validate=validate.Length(max=100))
 
 
 class UserResponseSchema(Schema):

@@ -1,0 +1,4 @@
+# Development and CI test dependencies (not installed in the production image).
+-r requirements.txt
+pytest>=8.0.0
+pytest-cov>=4.1.0

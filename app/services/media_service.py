@@ -289,26 +289,12 @@ class MediaService:
             unique_id = uuid.uuid4().hex[:12]
             storage_rel_path = f"media/{folder.team_id}/{folder.id}/{category}/{unique_id}_{sanitized}"
 
-            FirebaseStorageService.initialize()
-            if FirebaseStorageService._bucket is not None:
-                blob = FirebaseStorageService._bucket.blob(storage_rel_path)
-                blob.upload_from_file(file_obj, content_type=mime_type or "application/octet-stream")
-                storage_provider = MediaFile.PROVIDER_FIREBASE
-            else:
-                if os.environ.get("STRICT_CLOUD_STORAGE", "false").lower() == "true":
-                    raise ValidationError(
-                        "Cloud storage is strictly enforced (STRICT_CLOUD_STORAGE=true), but Firebase Cloud Storage bucket is not reachable. "
-                        "Please verify FIREBASE_STORAGE_BUCKET in .env and ensure Cloud Storage is activated in the Firebase Console: "
-                        "https://console.firebase.google.com/project/club-management-cuestic/storage",
-                        details={"error": "STORAGE_BUCKET_NOT_READY"}
-                    )
-                # Local storage fallback
-                local_target = os.path.join(FirebaseStorageService.get_local_storage_dir(), storage_rel_path)
-                os.makedirs(os.path.dirname(local_target), exist_ok=True)
-                with open(local_target, "wb") as f_out:
-                    file_obj.seek(0)
-                    f_out.write(file_obj.read())
-                storage_provider = MediaFile.PROVIDER_LOCAL
+            provider = FirebaseStorageService.put_object(
+                storage_rel_path, file_obj, mime_type or "application/octet-stream"
+            )
+            storage_provider = (
+                MediaFile.PROVIDER_FIREBASE if provider == "firebase" else MediaFile.PROVIDER_LOCAL
+            )
 
             storage_path = storage_rel_path
 

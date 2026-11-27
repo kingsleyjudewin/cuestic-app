@@ -10,8 +10,7 @@ From the project root directory:
 
 ```bash
 bash scripts/run_localhost.sh
-```
-
+``
 This automated script:
 1. Clears existing processes on ports `5000` and `8080`.
 2. Verifies the Flutter Web bundle (or builds it if missing).
@@ -20,7 +19,6 @@ This automated script:
 5. Verifies backend health and prints live status.
 
 ---
-
 ## 2. Manual Startup (Step-by-Step)
 
 If you prefer running the servers in separate terminals:
@@ -50,35 +48,33 @@ cd "/home/kingsley-judewin/cuestic vp app"
 
 ---
 
-## 3. Verified Login Credentials (1 Real Account Per Role)
+## 3. Login Accounts
 
-All credentials are tested and active:
+Real account credentials are **never** stored in this repository (it is public).
 
-| Role | Name | Username | Password | Team / Department |
-| :--- | :--- | :--- | :--- | :--- |
-| **President** | Club Executive Admin | `clubadmin` | `AdminPass123!Secure` | Executive Admin |
-| **Admin** | Admin Staff | `admin_staff` | `AdminStaff2026!` | Department Office |
-| **Team Leader** | John Victor | `john.victor` | `MemberPass2026!` | **MC Team** (Lead) |
-| **Member (MC Anchor)** | Merrick | `merrick` | `MemberPass2026!` | **MC Team** (Anchor) |
-| **Member (Volunteer)** | Jayani CU | `jayani.cu` | `jayani.cu@123` | Volunteering Team |
-| **Faculty Coordinator** | Dr Chidambaram S | `chidambaram.s` | `Research2026!Chidambaram` | Hyperspectral Image Processing |
-| **Student Researcher** | Vikram Aditya | `vikram.aditya` | `StudentPass2026!` | Hyperspectral Image Processing Lab |
+* **Local development:** create your own accounts with `scripts/seed_data.py` (the admin password comes from
+  `ADMIN_PASSWORD` in your local `.env`), or ask the club administrator for a development login.
+* **Production:** credentials are handed out privately by the administrator. If a password is ever exposed,
+  rotate it (see `DEPLOYMENT.md` → *Rotating leaked passwords*).
 
 ---
 
 ## 4. Database Selection (`.env`)
 
-Configure the database inside `.env`:
+Configure the database inside `.env` (never commit this file):
 
 ### Option A: Local SQLite (Fastest for Offline / Local Dev)
 ```bash
-DATABASE_URL="sqlite:////home/kingsley-judewin/cuestic vp app/instance/department_club.db"
+DATABASE_URL="sqlite:///instance/department_club.db"
 ```
 
-### Option B: Real Neon Cloud PostgreSQL
+### Option B: Neon Cloud PostgreSQL
 ```bash
-DATABASE_URL="postgresql://neondb_owner:<your-neon-password>@ep-soft-lab-b5wjojj5-pooler.c-7.us-east-2.aws.neon.tech/neondb?channel_binding=require&sslmode=require"
+# Copy the pooled connection string from the Neon console (Connect → Pooled connection)
+DATABASE_URL="postgresql://<user>:<password>@<endpoint>-pooler.<region>.aws.neon.tech/<db>?sslmode=require"
 ```
+
+For production deployment (Render, Vercel, Android APK) see `DEPLOYMENT.md`.
 
 ---
 
@@ -88,7 +84,7 @@ If you make modifications to files inside `frontend/lib/`, rebuild the web distr
 
 ```bash
 cd "/home/kingsley-judewin/cuestic vp app/frontend"
-/home/kingsley-judewin/flutter/bin/flutter build web
+/home/kingsley-judewin/flutter/bin/flutter build web --dart-define=API_BASE_URL=http://127.0.0.1:5000/api/v1 --dart-define=ALLOW_LOCAL_API=true
 ```
 
 ---

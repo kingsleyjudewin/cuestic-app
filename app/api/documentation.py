@@ -11,6 +11,8 @@ from app.services.simulation_service import SimulationService
 from app.models.member import Member
 from app.services.ai_service import AIService, AIProviderNotConfiguredError, optimize_image_bytes, optimize_base64_image
 from app.utils.permissions import token_required
+from app.utils.heavy_jobs import heavy_job
+from app.utils.isolated_worker import run_isolated, ocr_attendance_job
 from app.utils.errors import success_response, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -156,6 +158,7 @@ def list_drive_images():
 @documentation_bp.route("/reports/analyze-poster", methods=["POST"])
 @documentation_bp.route("/reports/<int:report_id>/analyze-poster", methods=["POST"])
 @token_required
+@heavy_job("ai")
 def analyze_poster(report_id: Optional[int] = None):
     """
     Extract structured context from an uploaded poster image or an existing storage document.
@@ -221,6 +224,7 @@ def analyze_poster(report_id: Optional[int] = None):
 @documentation_bp.route("/reports/ai-assist", methods=["POST"])
 @documentation_bp.route("/ai-assist", methods=["POST"])
 @token_required
+@heavy_job("ai")
 def ai_assist(report_id: Optional[int] = None):
     """Request AI Copilot assistance for a specific report field, with optional poster visual context."""
     data = request.get_json(silent=True) or {}
@@ -306,6 +310,7 @@ def list_ai_models():
 
 @documentation_bp.route("/reports/<int:report_id>/generate-docx", methods=["POST"])
 @token_required
+@heavy_job("cpu")
 def generate_docx(report_id: int):
     """Generate final DOCX file using the official CUestIC template."""
     output_path, download_filename = DocumentationService.generate_report_docx(report_id, g.current_user)
@@ -321,6 +326,7 @@ def generate_docx(report_id: int):
 
 @documentation_bp.route("/reports/<int:report_id>/download-docx", methods=["GET"])
 @token_required
+@heavy_job("cpu")
 def download_docx(report_id: int):
     """Download the generated report DOCX."""
     report = DocumentationService.get_report_by_id(report_id, g.current_user)
@@ -375,6 +381,7 @@ def save_report_to_folder(report_id: int):
 # -----------------------------------------------------------------------------
 @documentation_bp.route("/attendance/process", methods=["POST"])
 @token_required
+@heavy_job("cpu")
 def process_attendance():
     """
     Process attendance sheets (PDF/Image) using OCR and verify signature presence.
@@ -411,11 +418,13 @@ def process_attendance():
     except Exception:
         member_dir = {}
 
-    result = AttendanceOCRService.process_attendance_file(
-        file_bytes=file_bytes,
-        filename=filename,
-        member_directory=member_dir,
-        existing_records=existing_records,
+    # OCR runs in an isolated, lower-priority process so it cannot starve other requests.
+    result = run_isolated(
+        ocr_attendance_job,
+        file_bytes,
+        filename,
+        member_dir,
+        existing_records,
     )
 
     if not result.get("success"):
@@ -450,6 +459,7 @@ def verify_attendance_records():
 
 @documentation_bp.route("/attendance/class-chart", methods=["POST"])
 @token_required
+@heavy_job("cpu")
 def generate_class_distribution_chart():
     """
     Generate Google Forms style pie chart for class distribution.
@@ -512,6 +522,7 @@ def import_feedback_file():
 
 @documentation_bp.route("/feedback/analyze", methods=["POST"])
 @token_required
+@heavy_job("cpu")
 def analyze_feedback():
     """
     Analyze mapped PO feedback responses, generate Google Forms style pie charts,
@@ -542,6 +553,7 @@ def analyze_feedback():
 # -----------------------------------------------------------------------------
 @documentation_bp.route("/simulate/impact", methods=["POST"])
 @token_required
+@heavy_job("cpu")
 def simulate_impact_analysis():
     """
     Simulate participant count (200-230), class cohort distribution across the 8 classes,
@@ -567,6 +579,7 @@ def simulate_impact_analysis():
 
 @documentation_bp.route("/simulate/feedback", methods=["POST"])
 @token_required
+@heavy_job("cpu")
 def simulate_feedback_analysis():
     """
     Simulate feedback response distributions for all 12 Programme Outcomes (PO1–PO12)

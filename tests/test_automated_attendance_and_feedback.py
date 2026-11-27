@@ -139,3 +139,108 @@ def test_docx_report_generation_with_all_sections(tmp_path):
 
     assert os.path.exists(path)
     assert os.path.getsize(path) > 10000
+
+
+def test_multi_speaker_and_impact_analysis_docx(tmp_path):
+    """Verify multi-speaker table formatting, speaker profiles, and chart-derived impact analysis."""
+    import docx
+    out_file = str(tmp_path / "test_multi_speaker_report.docx")
+
+    _, chart_b64 = FeedbackAnalysisService.generate_po_pie_chart("PO1", "Engineering Knowledge", {"Fair": 2, "Satisfactory": 5, "Very Good": 20, "Excellent": 30})
+    _, chart_b64_2 = FeedbackAnalysisService.generate_po_pie_chart("PO2", "Problem Analysis", {"Fair": 1, "Satisfactory": 4, "Very Good": 18, "Excellent": 35})
+
+    payload = {
+        "title": "EMBEDDED AI WORKSHOP",
+        "type_of_activity": "Technical Workshop",
+        "speakers": [
+            {
+                "name": "Dr. Alice Smith",
+                "title": "Principal Architect",
+                "organization": "Intel Labs",
+                "presentation_title": "TinyML Acceleration",
+                "profile": "Dr. Smith leads TinyML architecture research with 20 IEEE publications.",
+            },
+            {
+                "name": "Prof. Bob Jones",
+                "title": "Professor",
+                "organization": "IIT Madras",
+                "presentation_title": "Edge Inference Systems",
+                "profile": "Prof. Jones specializes in neuromorphic computing and low-power hardware.",
+            },
+            {
+                "name": "Ms. Carol White",
+                "title": "Senior Solutions Engineer",
+                "organization": "NVIDIA",
+                "presentation_title": "Jetson Orin Optimization",
+                "profile": "Ms. White mentors university development teams in GPU-accelerated robotics.",
+            },
+        ],
+        "po_results": {
+            "PO1": {
+                "po_id": "PO1",
+                "po_title": "Engineering Knowledge",
+                "counts": {"Fair": 2, "Satisfactory": 5, "Very Good": 20, "Excellent": 30},
+                "positive_percentage": 87.7,
+                "chart_base64": chart_b64,
+                "total_responses": 220,
+            },
+            "PO2": {
+                "po_id": "PO2",
+                "po_title": "Problem Analysis",
+                "counts": {"Fair": 1, "Satisfactory": 4, "Very Good": 18, "Excellent": 35},
+                "positive_percentage": 91.4,
+                "chart_base64": chart_b64_2,
+                "total_responses": 220,
+            },
+        },
+        "attendance_summary": {
+            "total_verified_unique": 220,
+            "class_distribution": [
+                {"class_name": "6BTELCS", "count": 110, "percentage": 50.0},
+                {"class_name": "6BTEC", "count": 110, "percentage": 50.0},
+            ],
+        },
+    }
+
+    def dummy_resolver(ref):
+        if ref and ref.startswith("data:image/"):
+            import base64
+            return base64.b64decode(ref.split(";base64,")[1])
+        return None
+
+    path = ReportGeneratorService.generate_report_docx(
+        report_data=payload,
+        output_filepath=out_file,
+        image_resolver=dummy_resolver,
+    )
+
+    assert os.path.exists(path)
+    doc = docx.Document(path)
+
+    # 1. Verify one numbered heading + one 4-row, 2-column table per speaker (Tables 1, 2, 3)
+    doc_text = "\n".join([p.text for p in doc.paragraphs])
+    for n, name in enumerate(("Alice Smith", "Bob Jones", "Carol White"), start=1):
+        assert f"Speaker Details {n}" in doc_text
+        tbl = doc.tables[n]
+        assert len(tbl.rows) == 4
+        assert tbl.rows[0].cells[0].text.strip() == "Name"
+        assert name in tbl.rows[0].cells[1].text
+
+    # 2. Verify all 3 speaker profiles exist in paragraphs, each under its own speaker
+    assert "Dr. Alice Smith" in doc_text
+    assert "TinyML architecture research" in doc_text
+    assert "Prof. Bob Jones" in doc_text
+    assert "neuromorphic computing" in doc_text
+    assert "Ms. Carol White" in doc_text
+    assert "GPU-accelerated robotics" in doc_text
+
+    # 3. Verify Impact Analysis generated automatically from pie chart
+    assert "Impact Analysis:" in doc_text
+    assert "89.6%" in doc_text or "PO2" in doc_text
+    assert "220 verified participant respondents" in doc_text
+
+    # 4. Verify sequence: Feedback Analysis -> Impact Analysis -> Report submitted by
+    fb_idx = next(i for i, p in enumerate(doc.paragraphs) if "Feedback Analysis:" in p.text)
+    imp_idx = next(i for i, p in enumerate(doc.paragraphs) if "Impact Analysis:" in p.text)
+    sub_idx = next(i for i, p in enumerate(doc.paragraphs) if "Report submitted by" in p.text)
+    assert fb_idx < imp_idx < sub_idx

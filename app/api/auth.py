@@ -96,27 +96,59 @@ def me():
 
 
 @auth_bp.route("/change-password", methods=["POST"])
+@limiter.limit("10 per minute;30 per hour")
 @token_required
 def change_password():
     """
-    Change password for the currently authenticated user.
+    Change the password of the signed-in user (also completes a mandatory password change).
     ---
     tags:
       - Authentication
     security:
       - BearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [current_password, new_password, confirm_password]
+            properties:
+              current_password: {type: string}
+              new_password: {type: string, description: "12+ chars, upper, lower, number, special"}
+              confirm_password: {type: string}
+    responses:
+      200:
+        description: Password changed. Every previous session is revoked; use the returned token.
+      400:
+        description: INVALID_CURRENT_PASSWORD, PASSWORD_MISMATCH, WEAK_PASSWORD or VALIDATION_ERROR
+      401:
+        description: Session expired or revoked
     """
     data = request.get_json(silent=True) or {}
     errors = ChangePasswordSchema().validate(data)
     if errors:
         raise ValidationError("Validation error on password change.", details=errors)
 
-    AuthService.change_password(
+    result = AuthService.change_password(
         user=g.current_user,
         current_password=data["current_password"],
-        new_password=data["new_password"]
+        new_password=data["new_password"],
+        confirm_password=data.get("confirm_password"),
+        device_name=data.get("device_name") or (g.current_token.name if g.current_token else None),
     )
-    return success_response(message="Password changed successfully. Please log in with your new password.")
+    result["password_change_required"] = False
+    return success_response(
+        data=result,
+        message="Password changed successfully. All other sessions have been signed out.",
+    )
+
+
+@auth_bp.route("/password-policy", methods=["GET"])
+def password_policy():
+    """Password rules enforced by the server (for display in clients)."""
+    from app.utils.password_policy import MIN_LENGTH, REQUIREMENTS
+    return success_response(data={"min_length": MIN_LENGTH, "requirements": REQUIREMENTS})
 
 
 @auth_bp.route("/verify-setup-token", methods=["GET"])

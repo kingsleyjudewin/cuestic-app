@@ -65,7 +65,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      final customUrl = _showServerConfig && _serverUrlController.text.trim().isNotEmpty
+      final customUrl = ApiConfig.allowServerOverride && _showServerConfig && _serverUrlController.text.trim().isNotEmpty
           ? _serverUrlController.text.trim()
           : null;
 
@@ -189,7 +189,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // Server URL toggle
+                  // Server URL override: debug / ALLOW_SERVER_URL_OVERRIDE builds only.
+                  // Release users never type a server address.
+                  if (ApiConfig.allowServerOverride)
                   GestureDetector(
                     onTap: () {
                       setState(() {
@@ -217,7 +219,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
 
-                  if (_showServerConfig) ...[
+                  if (ApiConfig.allowServerOverride && _showServerConfig) ...[
                     const SizedBox(height: 10),
                     TextField(
                       controller: _serverUrlController,

@@ -153,9 +153,11 @@ class GeminiProvider(BaseAIProvider):
 
         last_error_text = ""
         for model in models_to_try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
+            # API key goes in a header, never in the URL: request errors include the URL and
+            # are logged / returned to the client.
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             try:
-                resp = requests.post(url, json=payload, timeout=22)
+                resp = requests.post(url, json=payload, headers={"x-goog-api-key": self.api_key}, timeout=22)
                 if resp.status_code == 200:
                     data = resp.json()
                     candidates = data.get("candidates", [])
@@ -173,8 +175,8 @@ class GeminiProvider(BaseAIProvider):
                 else:
                     last_error_text = resp.text
             except requests.RequestException as e:
-                logger.warning("Gemini network error on model %s: %s", model, e)
-                last_error_text = str(e)
+                logger.warning("Gemini network error on model %s: %s", model, type(e).__name__)
+                last_error_text = f"network error ({type(e).__name__})"
 
         raise ValidationError(f"Gemini API error: {last_error_text}")
 
@@ -244,7 +246,7 @@ class GrokProvider(BaseAIProvider):
 
             return choices[0].get("message", {}).get("content", "").strip()
         except requests.RequestException as e:
-            logger.error("Grok network error: %s", e)
+            logger.error("Grok network error: %s", type(e).__name__)
             raise ValidationError(f"Could not reach Grok service: {str(e)}")
 
 
@@ -460,6 +462,7 @@ class AIService:
                         "title": str(s.get("title", "")).strip(),
                         "organization": str(s.get("organization", "")).strip(),
                         "contact": str(s.get("contact", "")).strip(),
+                        "profile": str(s.get("profile", s.get("bio", ""))).strip(),
                     })
                 elif isinstance(s, str) and s.strip():
                     normalized_speakers.append({
@@ -467,6 +470,7 @@ class AIService:
                         "title": "",
                         "organization": "",
                         "contact": "",
+                        "profile": "",
                     })
             data["speakers"] = normalized_speakers
 

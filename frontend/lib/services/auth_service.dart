@@ -31,9 +31,17 @@ class AuthService extends ChangeNotifier {
   bool get isFacultyCoordinator => userRole == 'faculty_coordinator';
   bool get isStudentResearcher => userRole == 'student_researcher';
   bool get isResearchUser => isFacultyCoordinator || isStudentResearcher;
-  bool get mustChangePassword =>
-      _currentUser?['must_change_password'] == true ||
-      _currentUser?['credential_setup_status'] == 'pending';
+  /// Exact admin role only (not president): exempt from the mandatory password change.
+  bool get isSystemAdmin => userRole == 'admin';
+
+  /// True while the server requires a new password. The server enforces this on every request;
+  /// this getter only decides which screen to show.
+  bool get mustChangePassword {
+    if (_currentUser == null || isSystemAdmin) return false;
+    return _currentUser?['password_change_required'] == true ||
+        _currentUser?['must_change_password'] == true ||
+        _currentUser?['credential_setup_status'] == 'pending';
+  }
 
   bool get isVolunteer =>
       !isAdmin &&
@@ -100,11 +108,19 @@ class AuthService extends ChangeNotifier {
     return _token;
   }
 
+  /// The backend URL every service must use. A stored override is honoured only when
+  /// [ApiConfig.allowServerOverride] is on (debug builds); release builds always use the
+  /// API_BASE_URL compiled into the app, even if an old override is still stored.
   Future<String?> getConfiguredBaseUrl() async {
-    return await _storage.read(key: AppConstants.keyApiBaseUrl);
+    String? stored;
+    if (ApiConfig.allowServerOverride) {
+      stored = await _storage.read(key: AppConstants.keyApiBaseUrl);
+    }
+    return ApiConfig.resolve(stored);
   }
 
   Future<void> setConfiguredBaseUrl(String url) async {
+    if (!ApiConfig.allowServerOverride) return;
     await _storage.write(key: AppConstants.keyApiBaseUrl, value: url);
     notifyListeners();
   }
@@ -126,7 +142,10 @@ class AuthService extends ChangeNotifier {
     String? deviceName,
     String? customBaseUrl,
   }) async {
-    final baseUrl = customBaseUrl ?? (await getConfiguredBaseUrl()) ?? AppConstants.defaultBaseUrl;
+    if (!ApiConfig.allowServerOverride) customBaseUrl = null;
+    final baseUrl = customBaseUrl != null
+        ? ApiConfig.resolve(customBaseUrl)
+        : ((await getConfiguredBaseUrl()) ?? AppConstants.defaultBaseUrl);
     final uri = Uri.parse('$baseUrl/auth/login');
 
     http.Response response;
@@ -176,6 +195,92 @@ class AuthService extends ChangeNotifier {
     throw Exception(err);
   }
 
+  /// Completes a (mandatory) password change. On success the server revokes every previous
+  /// session and returns a new token, which replaces the stored one.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    final baseUrl = (await getConfiguredBaseUrl()) ?? AppConstants.defaultBaseUrl;
+    final currentToken = _token;
+    if (currentToken == null) {
+      throw const PasswordChangeException('SESSION_EXPIRED', 'Your session has expired. Please sign in again.');
+    }
+
+    http.Response response;
+    try {
+      response = await _client.post(
+        Uri.parse('$baseUrl/auth/change-password'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $currentToken',
+        },
+        body: jsonEncode({
+          'current_password': currentPassword,
+          'new_password': newPassword,
+          'confirm_password': confirmPassword,
+        }),
+      ).timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      throw const PasswordChangeException('NETWORK_ERROR', 'The server did not respond. Check your connection and try again.');
+    } catch (_) {
+      throw const PasswordChangeException('NETWORK_ERROR', 'Could not reach the server. Check your connection and try again.');
+    }
+
+    Map<String, dynamic>? decoded;
+    try {
+      final body = jsonDecode(response.body);
+      if (body is Map<String, dynamic>) decoded = body;
+    } catch (_) {}
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final data = decoded?['data'] as Map<String, dynamic>?;
+      final newToken = data?['token'] as String?;
+      final userObj = data?['user'] as Map<String, dynamic>?;
+      if (newToken == null || userObj == null) {
+        throw const PasswordChangeException('SERVER_ERROR', 'Unexpected response from the server. Please sign in again.');
+      }
+      _token = newToken;
+      _currentUser = userObj;
+      await _storage.write(key: AppConstants.keyAuthToken, value: newToken);
+      await _storage.write(key: AppConstants.keyUserData, value: jsonEncode(userObj));
+      notifyListeners();
+      return;
+    }
+
+    final err = decoded?['error'] as Map<String, dynamic>?;
+    final code = err?['code']?.toString() ?? 'HTTP_${response.statusCode}';
+    final message = err?['message']?.toString();
+    final details = err?['details'];
+    List<String> problems = const [];
+    if (details is Map && details['new_password'] is List) {
+      problems = (details['new_password'] as List).map((e) => e.toString()).toList();
+    }
+
+    if (response.statusCode == 401) {
+      handleSessionExpired();
+      throw const PasswordChangeException('SESSION_EXPIRED', 'Your session has expired. Please sign in again.');
+    }
+    if (response.statusCode == 429) {
+      throw const PasswordChangeException('RATE_LIMITED', 'Too many attempts. Please wait a minute and try again.');
+    }
+    if (response.statusCode >= 500) {
+      throw const PasswordChangeException('SERVER_ERROR', 'The server could not complete the request. Please try again later.');
+    }
+    throw PasswordChangeException(code, message ?? 'The password could not be changed.', problems: problems);
+  }
+
+  /// Called when any request is answered with 403 PASSWORD_CHANGE_REQUIRED (for example after an
+  /// administrator flagged the account while the app was open).
+  Future<void> markPasswordChangeRequired() async {
+    if (_currentUser == null || isSystemAdmin || mustChangePassword) return;
+    _currentUser = {..._currentUser!, 'password_change_required': true};
+    await _storage.write(key: AppConstants.keyUserData, value: jsonEncode(_currentUser));
+    notifyListeners();
+  }
+
   Future<void> updateCurrentUser(Map<String, dynamic> userObj) async {
     _currentUser = userObj;
     await _storage.write(key: AppConstants.keyUserData, value: jsonEncode(userObj));
@@ -221,4 +326,14 @@ class AuthService extends ChangeNotifier {
     _sessionExpiredController.close();
     super.dispose();
   }
+}
+
+class PasswordChangeException implements Exception {
+  final String code;
+  final String message;
+  final List<String> problems;
+  const PasswordChangeException(this.code, this.message, {this.problems = const []});
+
+  @override
+  String toString() => message;
 }

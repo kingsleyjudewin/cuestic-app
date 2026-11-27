@@ -313,6 +313,24 @@ class TestResearchManagementSystem:
         student_token, s_user = login_user(client, student_user.username, temp_pass)
         assert s_user["role"] == User.ROLE_STUDENT_RESEARCHER
 
+        # Generated temporary password: the portal stays locked until the student sets their own
+        # (mandatory password change, enforced by the server).
+        assert s_user["password_change_required"] is True
+        locked = client.get("/api/v1/research/student/overview", headers=auth_header(student_token))
+        assert locked.status_code == 403
+        assert locked.get_json()["error"]["code"] == "PASSWORD_CHANGE_REQUIRED"
+        change = client.post(
+            "/api/v1/auth/change-password",
+            headers=auth_header(student_token),
+            json={
+                "current_password": temp_pass,
+                "new_password": "RohanOwnChosen#2026",
+                "confirm_password": "RohanOwnChosen#2026",
+            },
+        )
+        assert change.status_code == 200
+        student_token = change.get_json()["data"]["token"]
+
         # Student views overview
         resp = client.get("/api/v1/research/student/overview", headers=auth_header(student_token))
         assert resp.status_code == 200

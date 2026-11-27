@@ -3,7 +3,7 @@ import os
 import base64
 import logging
 from typing import Optional
-from flask import Blueprint, request, g, send_file, Response
+from flask import Blueprint, request, g, send_file, Response, current_app
 from app.services.documentation_service import DocumentationService
 from app.services.attendance_ocr_service import AttendanceOCRService
 from app.services.feedback_analysis_service import FeedbackAnalysisService
@@ -13,7 +13,7 @@ from app.services.ai_service import AIService, AIProviderNotConfiguredError, opt
 from app.utils.permissions import token_required
 from app.utils.heavy_jobs import heavy_job
 from app.utils.isolated_worker import run_isolated, ocr_attendance_job
-from app.utils.errors import success_response, ValidationError
+from app.utils.errors import success_response, ValidationError, AppError
 
 logger = logging.getLogger(__name__)
 
@@ -387,6 +387,14 @@ def process_attendance():
     Process attendance sheets (PDF/Image) using OCR and verify signature presence.
     Extracts registration numbers, signature detection status, and class mappings.
     """
+    if not current_app.config.get("ENABLE_OCR", True):
+        raise AppError(
+            "Attendance OCR is turned off on this server (not enough memory). "
+            "Enter attendance manually or ask the administrator to enable it.",
+            code="OCR_DISABLED",
+            status_code=503,
+        )
+
     file_bytes = None
     filename = "attendance_sheet"
     existing_records = None

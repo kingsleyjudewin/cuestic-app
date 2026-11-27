@@ -86,6 +86,8 @@ class Config:
     # Extra requests wait up to HEAVY_JOB_QUEUE_TIMEOUT seconds, then get HTTP 503 "busy, retry".
     MAX_CONCURRENT_HEAVY_JOBS = _env_int("MAX_CONCURRENT_HEAVY_JOBS", 2)
     HEAVY_JOB_QUEUE_TIMEOUT = _env_int("HEAVY_JOB_QUEUE_TIMEOUT", 60)
+    # Attendance OCR needs ~630 MB at peak; set ENABLE_OCR=false on 512 MB hosts (Render free).
+    ENABLE_OCR = _env_bool("ENABLE_OCR", True)
 
     # Persistent file storage. Firebase Storage is used when configured; otherwise files go under
     # STORAGE_LOCAL_ROOT (use a Render persistent disk path in production, e.g. /var/data/storage).

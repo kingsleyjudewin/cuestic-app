@@ -363,3 +363,14 @@ def test_baseline_scan_records_without_notifying(app, sample_event, seed_members
         assert stats["deadline_reminders_created"] == 1 and sent == []
         ReminderService.scan_and_generate_reminders()  # later scans do not re-announce it
         assert sent == []
+
+
+def test_ocr_can_be_disabled_on_small_hosts(app, client, admin_user):
+    app.config["ENABLE_OCR"] = False
+    try:
+        r = client.post("/api/v1/documentation/attendance/process", headers=admin_user["headers"],
+                        json={"file_base64": "aGVsbG8=", "filename": "a.png"})
+        assert r.status_code == 503
+        assert r.get_json()["error"]["code"] == "OCR_DISABLED"
+    finally:
+        app.config["ENABLE_OCR"] = True

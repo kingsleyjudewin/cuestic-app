@@ -26,6 +26,13 @@ Files → **Firebase Storage** (or a Render Disk) · Web app → **Vercel** · A
 
 ## 1. Render (backend)
 
+> **Currently configured for Render's FREE plan** (`render.yaml`): 512 MB RAM, the service sleeps after
+> 15 minutes without traffic (first request then takes ~30–60 s), attendance OCR is turned off
+> (`ENABLE_OCR=false`, the endpoint answers 503 `OCR_DISABLED`), reminders only run while awake, and there is
+> no pre-deploy step — run `flask db upgrade` against Neon yourself before deploying a new migration.
+> To upgrade: set `plan: standard`, `ENABLE_OCR=true`, restore `GUNICORN_THREADS=12`, `DB_POOL_SIZE=10`,
+> `MAX_CONCURRENT_HEAVY_JOBS=2` and add `preDeployCommand: flask db upgrade`.
+
 ### Create the service
 1. Render Dashboard → **New → Blueprint** → select this repository. Render reads `render.yaml`.
 2. Confirm: runtime **Docker**, region **Ohio** (same AWS region as Neon), plan **Standard (2 GB)**.

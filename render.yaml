@@ -9,15 +9,14 @@ services:
     dockerContext: .
     # Same AWS region as the Neon database (us-east-2): ~1 ms per query instead of ~230 ms.
     region: ohio
-    # 2 GB RAM. One OCR run peaks around 630 MB; the 512 MB plans (free/starter) will be
-    # OOM-killed by OCR or report generation.
-    plan: standard
+    # FREE plan (512 MB, sleeps after 15 min idle). Attendance OCR is disabled (ENABLE_OCR=false)
+    # because one OCR run peaks around 630 MB. For production use, switch to `plan: standard`
+    # (2 GB), set ENABLE_OCR=true and re-add `preDeployCommand: flask db upgrade` (paid plans only).
+    # On the free plan run migrations manually: `flask db upgrade` with DATABASE_URL pointing at Neon.
+    plan: free
     numInstances: 1
     healthCheckPath: /health
     autoDeploy: true
-    # Applies pending Alembic migrations once per deploy, before traffic switches over.
-    # Upgrade-only (never downgrades or drops data). Requires a paid plan.
-    preDeployCommand: flask db upgrade
     envVars:
       - key: FLASK_ENV
         value: production
@@ -32,19 +31,21 @@ services:
       - key: WEB_CONCURRENCY
         value: "1"
       - key: GUNICORN_THREADS
-        value: "12"
+        value: "6"
       - key: GUNICORN_TIMEOUT
         value: "120"
       - key: DB_POOL_SIZE
-        value: "10"
+        value: "5"
       - key: DB_MAX_OVERFLOW
-        value: "10"
+        value: "5"
       - key: ENABLE_BACKGROUND_SCHEDULER
         value: "true"
       - key: MAX_CONCURRENT_HEAVY_JOBS
-        value: "2"
+        value: "1"
       - key: MAX_CONCURRENT_AI_JOBS
-        value: "4"
+        value: "2"
+      - key: ENABLE_OCR
+        value: "false" # free plan: OCR would exceed 512 MB
       - key: APP_TIMEZONE
         value: Asia/Kolkata
       - key: TOKEN_EXPIRY_DAYS

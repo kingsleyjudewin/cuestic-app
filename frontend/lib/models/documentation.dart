@@ -132,12 +132,14 @@ class SpeakerEntry {
   String title;
   String organization;
   String contact;
+  String profile;
 
   SpeakerEntry({
     this.name = '',
     this.title = '',
     this.organization = '',
     this.contact = '',
+    this.profile = '',
   });
 
   factory SpeakerEntry.fromJson(Map<String, dynamic> json) {
@@ -146,6 +148,7 @@ class SpeakerEntry {
       title: json['title']?.toString() ?? '',
       organization: json['organization']?.toString() ?? '',
       contact: json['contact']?.toString() ?? '',
+      profile: json['profile']?.toString() ?? json['bio']?.toString() ?? '',
     );
   }
 
@@ -154,6 +157,7 @@ class SpeakerEntry {
         'title': title.trim(),
         'organization': organization.trim(),
         'contact': contact.trim(),
+        'profile': profile.trim(),
       };
 }
 

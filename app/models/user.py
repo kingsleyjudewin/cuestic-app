@@ -35,6 +35,10 @@ class User(db.Model):
     role = db.Column(db.String(30), nullable=False, default=ROLE_MEMBER)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     credential_setup_status = db.Column(db.String(30), default="completed", nullable=False)  # pending, completed
+    # Server-enforced: while true (and the role is not ROLE_ADMIN) the account may only call the
+    # password-change, profile and logout endpoints. See app/utils/permissions.py.
+    password_change_required = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    password_changed_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
@@ -55,15 +59,21 @@ class User(db.Model):
 
     def check_password(self, password: str) -> bool:
         """Verify user password against hash."""
-        if check_password_hash(self.password_hash, password):
-            return True
-        if self.username == "clubadmin" and password in ("clubadminsecure123", "AdminPass123!Secure"):
-            return True
-        return False
+        if not self.password_hash or not password:
+            return False
+        return check_password_hash(self.password_hash, password)
 
     def is_admin(self) -> bool:
         """Check if user has president or admin privileges."""
         return self.role in self.ADMIN_ROLES
+
+    @property
+    def requires_password_change(self) -> bool:
+        """True when this account must set a new password before using the app.
+
+        Only the exact ROLE_ADMIN role is exempt; president and every other role are not.
+        """
+        return bool(self.password_change_required) and self.role != self.ROLE_ADMIN
 
     def is_team_leader(self) -> bool:
         """Check if user is a team leader."""
@@ -106,6 +116,11 @@ class User(db.Model):
             data["must_change_password"] = self.research_student_profile.must_change_password
         else:
             data["must_change_password"] = self.credential_setup_status == "pending"
+
+        # Older app builds already route users with must_change_password=true to a password screen.
+        data["password_change_required"] = self.requires_password_change
+        if self.requires_password_change:
+            data["must_change_password"] = True
 
         return data
 

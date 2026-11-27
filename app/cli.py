@@ -493,8 +493,180 @@ def import_media_members_command(dry_run, confirm, operator, file_path, json_out
         click.echo("")
 
 
+@click.command("reminders-scan")
+@click.option("--no-notify", is_flag=True, default=False,
+              help="Record reminders without sending push notifications (baseline an existing database).")
+@with_appcontext
+def reminders_scan_command(no_notify):
+    """Run one reminder scan now (for a Render Cron Job or manual use). Safe to run concurrently."""
+    from flask import current_app
+    from app.services.scheduler_service import run_reminder_scan
+    stats = run_reminder_scan(current_app._get_current_object(), notify=not no_notify)
+    click.echo(json.dumps(stats if stats is not None else {"skipped": True}, indent=2, default=str))
+
+
+@click.command("rotate-leaked-passwords")
+@click.option("--leaked-file", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="Text file with one leaked password per line (keep it outside Git).")
+@click.option("--confirm", is_flag=True, default=False,
+              help="Actually change passwords. Without this flag only a dry-run report is printed.")
+@click.option("--output", default=None, type=click.Path(dir_okay=False),
+              help="CSV to write new temporary passwords to (default: instance/rotated_credentials_<time>.csv).")
+@with_appcontext
+def rotate_leaked_passwords_command(leaked_file, confirm, output):
+    """
+    Find active accounts whose password is one of the leaked passwords, give each a random
+    temporary password, revoke all of their API tokens, and force a password change at next login.
+    """
+    import csv
+    import os
+    import secrets
+    import string
+    from collections import Counter
+    from datetime import datetime
+    from werkzeug.security import check_password_hash
+    from app.extensions import db
+    from app.models.user import User, ApiToken
+    from app.utils.permissions import invalidate_token_cache
+
+    with open(leaked_file, "r", encoding="utf-8") as fh:
+        leaked = [line.rstrip("\n") for line in fh if line.strip()]
+    if not leaked:
+        raise click.ClickException("The leaked password file is empty.")
+
+    users = User.query.filter_by(is_active=True).all()
+    affected = [u for u in users if u.password_hash and any(check_password_hash(u.password_hash, p) for p in leaked)]
+    by_role = Counter(u.role for u in affected)
+    click.echo(f"Active accounts: {len(users)}. Using a leaked password: {len(affected)} {dict(by_role)}")
+
+    if not confirm:
+        click.echo("Dry run only. Re-run with --confirm to rotate these passwords.")
+        return
+
+    alphabet = string.ascii_letters + string.digits
+    def temp_password() -> str:
+        return "".join(secrets.choice(alphabet) for _ in range(14)) + secrets.choice("!@#$%") + secrets.choice(string.digits)
+
+    if output is None:
+        os.makedirs(os.path.join(os.getcwd(), "instance"), exist_ok=True)
+        output = os.path.join("instance", f"rotated_credentials_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+
+    rows = []
+    for u in affected:
+        new_pw = temp_password()
+        u.set_password(new_pw)
+        if u.role != User.ROLE_ADMIN:  # admin gets a new random password but is never forced to change it
+            u.credential_setup_status = "pending"
+            u.password_change_required = True
+            if u.faculty_profile:
+                u.faculty_profile.must_change_password = True
+            if u.research_student_profile:
+                u.research_student_profile.must_change_password = True
+        ApiToken.query.filter_by(user_id=u.id, is_revoked=False).update({"is_revoked": True})
+        rows.append({"username": u.username, "role": u.role, "temporary_password": new_pw})
+    db.session.commit()
+    for u in affected:
+        invalidate_token_cache(user_id=u.id)
+
+    fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["username", "role", "temporary_password"])
+        writer.writeheader()
+        writer.writerows(rows)
+    click.echo(f"Rotated {len(rows)} passwords and revoked their sessions. Temporary passwords: {output} (mode 600).")
+    click.echo("Share each password privately; users must set a new one at first login. Delete the CSV afterwards.")
+
+
+@click.command("password-hashes")
+@click.option("--input", "input_file", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="Plaintext file, one leaked password per line (keep it outside the repository).")
+@click.option("--output", "output_file", required=True, type=click.Path(dir_okay=False),
+              help="Where to write SHA-256 digests for LEAKED_PASSWORD_HASHES_FILE.")
+def password_hashes_command(input_file, output_file):
+    """Convert a plaintext leaked-password list into the hashed list the server checks against."""
+    import hashlib
+    import os
+    with open(input_file, encoding="utf-8") as fh:
+        digests = sorted({hashlib.sha256(line.rstrip("\n").encode("utf-8")).hexdigest()
+                          for line in fh if line.rstrip("\n")})
+    fd = os.open(output_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as out:
+        out.write("\n".join(digests) + "\n")
+    click.echo(f"Wrote {len(digests)} hashes to {output_file}. Set LEAKED_PASSWORD_HASHES_FILE to this path.")
+
+
+@click.command("require-password-change")
+@click.option("--confirm", is_flag=True, help="Apply the change. Without it only a preview is printed.")
+@click.option("--revert", is_flag=True, help="Undo: clear the flag for accounts that have not changed their password yet.")
+@with_appcontext
+def require_password_change_command(confirm, revert):
+    """Require every non-admin account to set a new password at next sign-in.
+
+    Only the exact 'admin' role is excluded. Passwords, profiles and roles are not modified.
+    Safe to re-run: accounts that already completed the change (password_changed_at set) and
+    accounts already flagged are skipped. Every active session of a newly flagged account keeps
+    working only for the password-change screen.
+    """
+    from collections import Counter
+    from app.extensions import db
+    from app.models.user import User
+    from app.services.audit_service import AuditService
+    from app.utils.permissions import invalidate_token_cache
+
+    non_admin = User.query.filter(User.role != User.ROLE_ADMIN)
+    if revert:
+        targets = non_admin.filter(
+            User.password_change_required.is_(True),
+            User.password_changed_at.is_(None),
+            User.credential_setup_status != "pending",  # keep requirements that predate this command
+        ).all()
+        verb = "cleared"
+    else:
+        targets = non_admin.filter(
+            User.password_change_required.is_(False),
+            User.password_changed_at.is_(None),
+        ).all()
+        verb = "flagged"
+
+    by_role = Counter(u.role for u in targets)
+    inactive = sum(1 for u in targets if not u.is_active)
+    total = User.query.count()
+    click.echo(f"Accounts in database: {total}. Admin accounts excluded: "
+               f"{User.query.filter(User.role == User.ROLE_ADMIN).count()}.")
+    click.echo(f"Accounts that would be {verb}: {len(targets)} {dict(sorted(by_role.items()))} "
+               f"(of which inactive: {inactive}).")
+    click.echo("Equivalent preview SQL: SELECT role, count(*) FROM users WHERE role <> 'admin' "
+               + ("AND password_change_required AND password_changed_at IS NULL AND credential_setup_status <> 'pending' "
+                  if revert else "AND NOT password_change_required AND password_changed_at IS NULL ")
+               + "GROUP BY role;")
+    if not confirm:
+        click.echo("Dry run only. Re-run with --confirm to apply.")
+        return
+    if not targets:
+        click.echo("Nothing to do.")
+        return
+
+    for u in targets:
+        u.password_change_required = not revert
+    AuditService.log_action(
+        action="PASSWORD_CHANGE_REQUIREMENT_REVERTED" if revert else "PASSWORD_CHANGE_REQUIRED_BULK",
+        entity_type="User",
+        entity_id=None,
+        actor_user_id=None,
+        details={"count": len(targets), "by_role": dict(by_role)},
+    )
+    db.session.commit()
+    for u in targets:
+        invalidate_token_cache(user_id=u.id)
+    click.echo(f"Done: {len(targets)} accounts {verb}. Other server processes pick this up on their next request.")
+
+
 def register_cli_commands(app):
     """Register CLI commands with the Flask application."""
     app.cli.add_command(import_volunteers_command)
     app.cli.add_command(import_documentation_members_command)
     app.cli.add_command(import_media_members_command)
+    app.cli.add_command(reminders_scan_command)
+    app.cli.add_command(rotate_leaked_passwords_command)
+    app.cli.add_command(require_password_change_command)
+    app.cli.add_command(password_hashes_command)

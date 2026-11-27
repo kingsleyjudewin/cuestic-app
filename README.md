@@ -217,13 +217,15 @@ The application will start on `http://127.0.0.1:5000`:
 
 ## 10. Production Deployment Guidance
 
-1. **WSGI HTTP Server**: Run with Gunicorn behind Nginx:
-   ```bash
-   gunicorn --workers 4 --bind 127.0.0.1:8000 --access-logfile - wsgi:app
-   ```
-2. **Reverse Proxy (Nginx)**: Configure Nginx to forward requests, terminate SSL/TLS, and enforce request rate limits.
-3. **Database Security**: Ensure the SQLite database file and directory permissions are restricted to `0600` and `0700` respectively.
-4. **Environment Secrets**: Never commit `.env`. Ensure `SECRET_KEY` is a cryptographically strong random string (`openssl rand -hex 32`).
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the full, tested production setup (Render + Neon + Firebase Storage +
+Vercel + signed Android APK via GitHub Actions), required environment variables, capacity measurements and
+manual configuration steps. In short:
+
+1. **Server**: the production `Dockerfile` runs `gunicorn -c gunicorn.conf.py wsgi:app` — **one worker, 12 threads**
+   (in-memory caches are per process; do not raise the worker count without moving them to Redis).
+2. **Database**: PostgreSQL (Neon pooled endpoint). Production refuses to start on SQLite or with a weak `SECRET_KEY`.
+3. **Files**: uploads go to Firebase Storage (or a persistent disk via `STORAGE_LOCAL_ROOT`), never the ephemeral disk.
+4. **Secrets**: never commit `.env`, service-account JSON files or keystores; on Render use environment variables and Secret Files.
 
 ---
 

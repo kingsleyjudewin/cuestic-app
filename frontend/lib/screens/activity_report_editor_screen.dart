@@ -54,7 +54,7 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
   final _keyTakeawaysController = TextEditingController();
 
   // Section 4: Speaker Profile & Organiser
-  final _speakerProfileController = TextEditingController();
+  final List<TextEditingController> _speakerProfileControllers = [TextEditingController()];
   final _organiserNameController = TextEditingController();
   final _organiserDesignationController = TextEditingController();
   final _organiserSignatureController = TextEditingController(text: 'Signed');
@@ -200,7 +200,9 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
     _highlightsController.dispose();
     _summaryController.dispose();
     _keyTakeawaysController.dispose();
-    _speakerProfileController.dispose();
+    for (var c in _speakerProfileControllers) {
+      c.dispose();
+    }
     _organiserNameController.dispose();
     _organiserDesignationController.dispose();
     _organiserSignatureController.dispose();
@@ -260,12 +262,33 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
 
       final spkList = data['speakers'] as List<dynamic>?;
       _speakers.clear();
+      for (var c in _speakerProfileControllers) {
+        c.dispose();
+      }
+      _speakerProfileControllers.clear();
+
       if (spkList != null && spkList.isNotEmpty) {
         for (var s in spkList) {
           _speakers.add(SpeakerEntry.fromJson(Map<String, dynamic>.from(s as Map)));
         }
       } else {
         _speakers.add(SpeakerEntry());
+      }
+
+      final savedProfiles = data['speaker_profiles'] as List<dynamic>?;
+      for (int i = 0; i < _speakers.length; i++) {
+        String prof = _speakers[i].profile;
+        if (prof.isEmpty && savedProfiles != null && i < savedProfiles.length) {
+          prof = savedProfiles[i]?.toString() ?? '';
+        }
+        if (prof.isEmpty && i == 0 && data['speaker_profile'] != null) {
+          prof = data['speaker_profile']?.toString() ?? '';
+        }
+        _speakers[i].profile = prof;
+        _speakerProfileControllers.add(TextEditingController(text: prof));
+      }
+      if (_speakerProfileControllers.isEmpty) {
+        _speakerProfileControllers.add(TextEditingController());
       }
 
       final participants = (data['participants'] as Map<String, dynamic>?) ??
@@ -281,7 +304,6 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
           '';
       _keyTakeawaysController.text = participants['key_takeaways']?.toString() ?? '';
 
-      _speakerProfileController.text = data['speaker_profile']?.toString() ?? '';
       _impactAnalysisController.text = data['impact_analysis']?.toString() ?? '';
 
       final organiser = (data['organiser'] as Map<String, dynamic>?) ??
@@ -412,7 +434,17 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
         'venue': _venueController.text.trim(),
         'collaborators': _collaboratorsController.text.trim(),
       },
-      'speakers': _speakers.map((s) => s.toJson()).toList(),
+      'speakers': _speakers.asMap().entries.map((entry) {
+        final idx = entry.key;
+        final spk = entry.value;
+        final prof = idx < _speakerProfileControllers.length
+            ? _speakerProfileControllers[idx].text.trim()
+            : spk.profile.trim();
+        spk.profile = prof;
+        final json = spk.toJson();
+        json['profile'] = prof;
+        return json;
+      }).toList(),
       'participants': {
         'type_of_participants': _participantsTypeController.text.trim(),
         'highlights': _highlightsController.text.trim(),
@@ -425,7 +457,8 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
         'summary_of_activities': _summaryController.text.trim(),
         'key_takeaways': _keyTakeawaysController.text.trim(),
       },
-      'speaker_profile': _speakerProfileController.text.trim(),
+      'speaker_profiles': _speakerProfileControllers.map((c) => c.text.trim()).toList(),
+      'speaker_profile': _speakerProfileControllers.map((c) => c.text.trim()).where((p) => p.isNotEmpty).join('\n\n'),
       'attendance_summary': _attendanceSummary,
       'attendance_records': _attendanceRecords,
       'verified_attendance_count': _attendanceSummary?['total_verified_unique'],
@@ -1073,8 +1106,6 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
                   if (summary.isNotEmpty) _summaryController.text = summary;
                   if (highlights.isNotEmpty) _highlightsController.text = highlights;
                   if (keyTakeaways.isNotEmpty) _keyTakeawaysController.text = keyTakeaways;
-                  if (speakerProfile.isNotEmpty) _speakerProfileController.text = speakerProfile;
-
                   if (speakers.isNotEmpty) {
                     _speakers.clear();
                     for (var s in speakers) {
@@ -1084,10 +1115,26 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
                           title: s['title']?.toString() ?? '',
                           organization: s['organization']?.toString() ?? '',
                           contact: s['contact']?.toString() ?? '',
+                          profile: s['profile']?.toString() ?? s['bio']?.toString() ?? '',
                         ));
                       }
                     }
                     if (_speakers.isEmpty) _speakers.add(SpeakerEntry());
+                  }
+
+                  if (speakerProfile.isNotEmpty && _speakers.isNotEmpty && _speakers[0].profile.isEmpty) {
+                    _speakers[0].profile = speakerProfile;
+                  }
+
+                  for (var c in _speakerProfileControllers) {
+                    c.dispose();
+                  }
+                  _speakerProfileControllers.clear();
+                  for (var spk in _speakers) {
+                    _speakerProfileControllers.add(TextEditingController(text: spk.profile));
+                  }
+                  if (_speakerProfileControllers.isEmpty) {
+                    _speakerProfileControllers.add(TextEditingController());
                   }
                 });
 
@@ -2583,6 +2630,7 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
               onPressed: () {
                 setState(() {
                   _speakers.add(SpeakerEntry());
+                  _speakerProfileControllers.add(TextEditingController());
                 });
               },
             ),
@@ -2613,6 +2661,10 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
                           onPressed: () {
                             setState(() {
                               _speakers.removeAt(index);
+                              if (index < _speakerProfileControllers.length) {
+                                _speakerProfileControllers[index].dispose();
+                                _speakerProfileControllers.removeAt(index);
+                              }
                             });
                           },
                         ),
@@ -2628,7 +2680,10 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
                             labelText: 'Speaker Name *',
                             border: OutlineInputBorder(),
                           ),
-                          onChanged: (val) => speaker.name = val,
+                          onChanged: (val) {
+                            speaker.name = val;
+                            setState(() {});
+                          },
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -2733,13 +2788,31 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildFieldWithAiTarget(
-                  title: 'Speaker Profile (Bio)',
-                  fieldKey: 'speaker_profile',
-                  controller: _speakerProfileController,
-                  hint: 'Brief professional background, expertise, and accolades of the speaker(s)...',
-                  minLines: 3,
-                ),
+                ..._speakers.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final speaker = entry.value;
+                  while (_speakerProfileControllers.length <= index) {
+                    _speakerProfileControllers.add(TextEditingController(text: speaker.profile));
+                  }
+                  final spkName = speaker.name.trim();
+                  final title = _speakers.length > 1
+                      ? 'Speaker Profile (Bio) — Speaker #${index + 1}${spkName.isNotEmpty ? " ($spkName)" : ""}'
+                      : 'Speaker Profile (Bio)${spkName.isNotEmpty ? " ($spkName)" : ""}';
+                  final hint = spkName.isNotEmpty
+                      ? 'Brief professional background, expertise, and accolades of $spkName...'
+                      : 'Brief professional background, expertise, and accolades of speaker #${index + 1}...';
+
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 16.0),
+                    child: _buildFieldWithAiTarget(
+                      title: title,
+                      fieldKey: 'speaker_profile_$index',
+                      controller: _speakerProfileControllers[index],
+                      hint: hint,
+                      minLines: 3,
+                    ),
+                  );
+                }),
                 const SizedBox(height: 20),
                 const Text(
                   'Report Prepared By (Faculty / Student Organiser)',

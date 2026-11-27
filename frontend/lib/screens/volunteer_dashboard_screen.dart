@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/password_policy.dart';
 import '../config/constants.dart';
 import '../models/assignment.dart';
 import '../services/api_client.dart';
@@ -255,8 +256,12 @@ class _VolunteerDashboardScreenState extends State<VolunteerDashboardScreen> {
                       : () async {
                           final current = currentController.text;
                           final newPwd = newController.text;
-                          if (current.isEmpty || newPwd.length < 6) {
-                            setDialogState(() => dialogError = 'New password must be at least 6 characters.');
+                          if (current.isEmpty) {
+                            setDialogState(() => dialogError = 'Enter your current password.');
+                            return;
+                          }
+                          if (PasswordPolicy.problems(newPwd).isNotEmpty) {
+                            setDialogState(() => dialogError = 'New password needs: ${PasswordPolicy.problems(newPwd).join(', ').toLowerCase()}.');
                             return;
                           }
 

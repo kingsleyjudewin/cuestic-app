@@ -16,6 +16,7 @@ from app.models.task import Task
 from app.models.task_assignment import TaskAssignment
 from app.models.mc_script import McScript, McScriptSegment
 from app.utils.permissions import token_required
+from app.utils.heavy_jobs import heavy_job
 from app.utils.errors import success_response, ValidationError, NotFoundError
 
 logger = logging.getLogger(__name__)
@@ -211,6 +212,7 @@ def review_script(script_id: int):
 # -----------------------------------------------------------------------------
 @mc_bp.route("/scripts/<int:script_id>/generate-docx", methods=["POST"])
 @token_required
+@heavy_job("cpu")
 def generate_docx(script_id: int):
     """Generate professional DOCX version of the script."""
     out_path, filename = McScriptService.generate_docx(script_id, g.current_user)
@@ -222,6 +224,7 @@ def generate_docx(script_id: int):
 
 @mc_bp.route("/scripts/<int:script_id>/download-docx", methods=["GET"])
 @token_required
+@heavy_job("cpu")
 def download_docx(script_id: int):
     """Download the generated DOCX file."""
     script = McScriptService.get_script_by_id(script_id, g.current_user)
@@ -258,6 +261,7 @@ def upload_to_drive(script_id: int):
 # -----------------------------------------------------------------------------
 @mc_bp.route("/ai/generate-script", methods=["POST"])
 @token_required
+@heavy_job("ai")
 def ai_generate_full_script():
     """Generate a complete event hosting script based on verified event information."""
     data = request.get_json(silent=True) or {}
@@ -281,6 +285,7 @@ def ai_generate_full_script():
 
 @mc_bp.route("/ai/generate-segment", methods=["POST"])
 @token_required
+@heavy_job("ai")
 def ai_generate_segment():
     """Generate or enhance a specific script segment (e.g., Welcome, Chief Guest, Vote of Thanks)."""
     data = request.get_json(silent=True) or {}
@@ -311,6 +316,7 @@ def ai_generate_segment():
 
 @mc_bp.route("/ai/rewrite", methods=["POST"])
 @token_required
+@heavy_job("ai")
 def ai_rewrite_dialogue():
     """Adjust script tone, polish grammar, or auto-insert stage directions."""
     data = request.get_json(silent=True) or {}
@@ -342,6 +348,7 @@ def ai_rewrite_dialogue():
 
 @mc_bp.route("/ai-assist", methods=["POST"])
 @token_required
+@heavy_job("ai")
 def ai_assist():
     """Unified AI copilot assist for MC hosting scripts and event speeches."""
     data = request.get_json(silent=True) or {}
@@ -648,6 +655,7 @@ def save_script_as_template(script_id: int):
 
 @mc_bp.route("/scripts/<int:script_id>/segments/<int:segment_id>/ai-generate", methods=["POST"])
 @token_required
+@heavy_job("ai")
 def ai_generate_script_segment(script_id: int, segment_id: int):
     """
     AI-powered generation/refinement of a specific programme segment.

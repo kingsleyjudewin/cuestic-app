@@ -1,3 +1,5 @@
+import os
+import secrets
 """
 Mega Test Suite for Department Club Management Application.
 Executes all testing loops end-to-end:
@@ -32,6 +34,14 @@ def track_request(label, method, url, **kwargs):
     LATENCIES[label].append(dt)
     return resp, dt
 
+def _require_env(name):
+    """Credentials for end-to-end runs come from the environment, never from source code."""
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(f"Set {name} in the environment to run the mega test suite.")
+    return value
+
+
 def login(username, password):
     resp, dt = track_request("POST /auth/login", requests.post, f"{BASE_URL}/auth/login", json={
         "username": username,
@@ -54,7 +64,7 @@ def run_mega_test():
     # 1. PRESIDENT LOOP
     # -------------------------------------------------------------------------
     print("\n>>> LOOP 1: PRESIDENT LOOP & TASK ASSIGNMENT TO ALL MEMBERS ACROSS ALL TEAMS")
-    pres_token, pres_headers, pres_user, _ = login("clubadmin", "AdminPass123!Secure")
+    pres_token, pres_headers, pres_user, _ = login(os.environ.get("E2E_PRESIDENT_USERNAME", "clubadmin"), _require_env("E2E_PRESIDENT_PASSWORD"))
     print(f" [+] President logged in successfully: {pres_user['username']} (role: {pres_user['role']})")
     assert pres_user["role"] == "president", "User is not president"
 
@@ -139,7 +149,7 @@ def run_mega_test():
             continue
         username = linked_user["username"]
 
-        m_token, m_headers, m_user, _ = login(username, "MemberPass2026!")
+        m_token, m_headers, m_user, _ = login(username, _require_env("E2E_MEMBER_PASSWORD"))
 
         # Verify member can see their assignment
         r_my_ass, _ = track_request("GET /assignments/me", requests.get, f"{BASE_URL}/assignments/me", headers=m_headers)
@@ -188,7 +198,7 @@ def run_mega_test():
     doc_comm = comm_by_slug.get("documentation-community") or all_comms[2]
 
     # Test Team Isolation: Log in as Volunteering member (jayani.cu)
-    _, vol_headers, vol_user, _ = login("jayani.cu", "MemberPass2026!")
+    _, vol_headers, vol_user, _ = login("jayani.cu", _require_env("E2E_MEMBER_PASSWORD"))
     r_vol_comms, _ = track_request("GET /communities (Volunteering Member)", requests.get, f"{BASE_URL}/communities", headers=vol_headers)
     assert r_vol_comms.status_code == 200
     vol_user_comms = r_vol_comms.json()["data"]
@@ -221,7 +231,7 @@ def run_mega_test():
     print(f" [+] Message posted to #{vol_target_channel['name']} (ID: {sent_msg_id})")
 
     # Verify second Volunteering member (sagar.cu) sees the message
-    _, sagar_headers, _, _ = login("sagar.cu", "MemberPass2026!")
+    _, sagar_headers, _, _ = login("sagar.cu", _require_env("E2E_MEMBER_PASSWORD"))
     r_sagar_msgs, _ = track_request("GET /communities/<id>/channels/<id>/messages (Peer Member)", requests.get,
         f"{BASE_URL}/communities/{vol_comm['id']}/channels/{vol_target_channel['id']}/messages",
         headers=sagar_headers
@@ -232,7 +242,7 @@ def run_mega_test():
     print(" [+] Peer member sagar.cu successfully retrieved message!")
 
     # Verify Media member (nivin.cu) CANNOT read Volunteering channel messages
-    _, nivin_headers, _, _ = login("nivin.cu", "MemberPass2026!")
+    _, nivin_headers, _, _ = login("nivin.cu", _require_env("E2E_MEMBER_PASSWORD"))
     r_nivin_hack, _ = track_request("GET /communities/<id>/channels/<id>/messages (Cross-Team Forbidden)", requests.get,
         f"{BASE_URL}/communities/{vol_comm['id']}/channels/{vol_target_channel['id']}/messages",
         headers=nivin_headers
@@ -253,7 +263,7 @@ def run_mega_test():
     # 4. DOCUMENTATION LOOP
     # -------------------------------------------------------------------------
     print("\n>>> LOOP 4: DOCUMENTATION LOOP")
-    _, doc_headers, doc_user, _ = login("salomi", "MemberPass2026!")
+    _, doc_headers, doc_user, _ = login("salomi", _require_env("E2E_MEMBER_PASSWORD"))
     print(f" [+] Documentation member logged in: {doc_user['username']}")
 
     # Create Documentation Event Folder
@@ -294,7 +304,7 @@ def run_mega_test():
     # 5. MEDIA LOOP
     # -------------------------------------------------------------------------
     print("\n>>> LOOP 5: MEDIA LOOP")
-    _, media_headers, media_user, _ = login("nivin.cu", "MemberPass2026!")
+    _, media_headers, media_user, _ = login("nivin.cu", _require_env("E2E_MEMBER_PASSWORD"))
     print(f" [+] Media member logged in: {media_user['username']}")
 
     media_folder_name = f"Mega Test Media Album {int(time.time())}"
@@ -315,7 +325,7 @@ def run_mega_test():
     # 6. MC TEAM LOOP & AI COPILOT
     # -------------------------------------------------------------------------
     print("\n>>> LOOP 6: MC TEAM LOOP & AI COPILOT")
-    _, mc_headers, mc_user, _ = login("merrick", "MemberPass2026!")
+    _, mc_headers, mc_user, _ = login("merrick", _require_env("E2E_MEMBER_PASSWORD"))
     print(f" [+] MC Team member logged in: {mc_user['username']}")
 
     # Retrieve MC Dashboard
@@ -382,7 +392,7 @@ def run_mega_test():
     # -------------------------------------------------------------------------
     print("\n>>> LOOP 7: FACULTY & STUDENT RESEARCH MANAGEMENT LOOP")
     # Log in as Faculty Coordinator Dr. Chidambaram S
-    _, fac_headers, fac_user, _ = login("chidambaram.s", "Research2026!Chidambaram")
+    _, fac_headers, fac_user, _ = login(os.environ.get("E2E_FACULTY_USERNAME", "chidambaram.s"), _require_env("E2E_FACULTY_PASSWORD"))
     print(f" [+] Faculty Coordinator logged in: {fac_user['username']}")
 
     # Create Research Team
@@ -402,7 +412,7 @@ def run_mega_test():
         "full_name": f"Student Researcher {student_reg}",
         "registration_number": student_reg,
         "email": f"st.{student_reg.lower()}@department.edu",
-        "password": "ResearchPass2026!",
+        "password": os.environ.get("E2E_NEW_STUDENT_PASSWORD") or secrets.token_urlsafe(12),
         "programme": "B.Tech ECE",
         "semester": "Semester 6"
     })

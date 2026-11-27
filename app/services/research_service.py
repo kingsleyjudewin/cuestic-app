@@ -13,7 +13,7 @@ from flask import current_app
 from werkzeug.utils import secure_filename
 
 from app import db
-from app.models.user import User
+from app.models.user import User, ApiToken
 from app.models.member import Member
 from app.models.research import (
     FacultyProfile,
@@ -144,26 +144,10 @@ class ResearchService:
         user = db.session.get(User, user_id)
         if not user:
             raise ResearchNotFoundError("User not found.")
-
-        if not user.check_password(current_password):
-            raise ResearchServiceError("The current password provided is incorrect.")
-
-        if len(new_password) < 6:
-            raise ResearchServiceError("New password must be at least 6 characters long.")
-
-        if current_password == new_password:
-            raise ResearchServiceError("New password must be different from current password.")
-
-        user.set_password(new_password)
-        user.credential_setup_status = "completed"
-
-        if user.faculty_profile:
-            user.faculty_profile.must_change_password = False
-        if user.research_student_profile:
-            user.research_student_profile.must_change_password = False
-
-        db.session.commit()
-        return user.to_dict()
+        from app.services.auth_service import AuthService
+        return AuthService.change_password(
+            user=user, current_password=current_password, new_password=new_password, keep_token_id=-1
+        )["user"]
 
     @classmethod
     def set_student_password(
@@ -202,7 +186,12 @@ class ResearchService:
         student_user.set_password(new_password)
         student_user.credential_setup_status = "completed"
         student_profile.must_change_password = False
+        # Faculty-set password: the student must replace it at next login; old sessions end now.
+        student_user.password_change_required = True
+        ApiToken.query.filter_by(user_id=student_user.id, is_revoked=False).update({"is_revoked": True})
         db.session.commit()
+        from app.utils.permissions import invalidate_token_cache
+        invalidate_token_cache(user_id=student_user.id)
 
         return {
             "student_id": student_profile.id,
@@ -450,6 +439,7 @@ class ResearchService:
                 credential_setup_status="completed",
             )
             user.set_password(temp_password)
+            user.password_change_required = True  # faculty-assigned or generated password
             db.session.add(user)
             db.session.flush()
 
@@ -480,6 +470,7 @@ class ResearchService:
             if student_profile.user:
                 student_profile.user.set_password(custom_password)
                 student_profile.user.credential_setup_status = "completed"
+                student_profile.user.password_change_required = True
             student_profile.must_change_password = False
 
         # Check existing team membership

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DEBUG BUILDS ONLY (src/debug overrides src/main).
+     Allows plain HTTP so developers can reach a local backend (127.0.0.1, 10.0.2.2, LAN IPs).
+     Release and profile builds use src/main/res/xml/network_security_config.xml: HTTPS only. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

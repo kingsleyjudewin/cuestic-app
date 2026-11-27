@@ -23,7 +23,17 @@ def _get_firebase_app():
         import firebase_admin
         from firebase_admin import credentials
 
-        cred_path = os.environ.get("FIREBASE_CREDENTIALS_PATH")
+        from app.services.firebase_storage_service import _resolve_credentials_path
+
+        # Another service (e.g. Cloud Storage) may already have initialized the default app.
+        try:
+            firebase_admin.get_app()
+            _firebase_initialized = True
+            return True
+        except ValueError:
+            pass
+
+        cred_path = _resolve_credentials_path() or os.environ.get("FIREBASE_CREDENTIALS_PATH")
         cred_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
 
         if cred_path:
@@ -34,10 +44,10 @@ def _get_firebase_app():
                 cred = credentials.Certificate(cred_path)
                 firebase_admin.initialize_app(cred)
                 _firebase_initialized = True
-                logger.info("Firebase Admin initialized from credentials file: %s", cred_path)
+                logger.info("Firebase Admin initialized from credentials file.")
                 return True
             else:
-                logger.warning("Firebase credentials file specified but not found at: %s", cred_path)
+                logger.warning("Firebase credentials file specified but not found.")
         elif cred_json:
             service_account_info = json.loads(cred_json)
             cred = credentials.Certificate(service_account_info)
@@ -49,7 +59,7 @@ def _get_firebase_app():
             logger.info("Firebase Admin credentials not set. Running in development/mock notification mode.")
             return False
     except Exception as e:
-        logger.warning("Could not initialize Firebase Admin SDK: %s", e)
+        logger.warning("Could not initialize Firebase Admin SDK: %s", type(e).__name__)
         return False
 
 

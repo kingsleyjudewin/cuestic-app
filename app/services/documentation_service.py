@@ -20,6 +20,41 @@ from app.utils.datetime_utils import utc_now
 logger = logging.getLogger(__name__)
 
 
+def _allowed_local_image_roots() -> list:
+    """Directories a report image reference may be read from."""
+    from flask import current_app
+    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    roots = [
+        FirebaseStorageService.get_local_storage_dir(),
+        os.path.join(base, "instance", "uploads"),
+        os.path.join(base, "instance", "storage"),
+        os.path.join(base, "instance", "generated_charts"),
+    ]
+    try:
+        is_dev = bool(current_app.config.get("DEBUG")) and not current_app.config.get("TESTING")
+    except RuntimeError:
+        is_dev = False
+    if is_dev:
+        # Local desktop convenience only (never in production): screenshots/downloads by file name.
+        home = os.path.expanduser("~")
+        roots += [os.path.join(home, d) for d in (
+            "Downloads", "Music", os.path.join("Pictures", "Screenshots"), "Pictures", "Desktop", "Documents"
+        )]
+    return [os.path.realpath(r) for r in roots]
+
+
+def _resolve_safe_local_image_path(image_ref: str):
+    """Return a real path for image_ref only if it lies inside an allowed root, else None."""
+    if not image_ref or "\x00" in image_ref:
+        return None
+    for root in _allowed_local_image_roots():
+        candidate = image_ref if os.path.isabs(image_ref) else os.path.join(root, image_ref)
+        real = os.path.realpath(candidate)
+        if (real == root or real.startswith(root + os.sep)) and os.path.isfile(real):
+            return real
+    return None
+
+
 class DocumentationService:
     """Service handling Documentation team folders, document uploads, and report generation."""
 
@@ -500,28 +535,13 @@ class DocumentationService:
                     except Exception:
                         pass
 
-                # 2. Direct filesystem path
-                if os.path.exists(image_ref):
-                    with open(image_ref, "rb") as f:
+                # 2. Filesystem paths. Report data is user-editable, so a path is only honoured
+                #    when it resolves inside the application's own storage folders. This blocks
+                #    reading arbitrary server files (e.g. /etc/passwd, .env, credentials).
+                safe_path = _resolve_safe_local_image_path(image_ref)
+                if safe_path:
+                    with open(safe_path, "rb") as f:
                         return f.read()
-
-                # 3. Known user desktop and media directories (Screenshots, Downloads, Pictures, Desktop, Documents)
-                home_dir = os.path.expanduser("~")
-                candidate_dirs = [
-                    os.path.join(home_dir, "Downloads"),
-                    os.path.join(home_dir, "Music"),
-                    os.path.join(home_dir, "Pictures", "Screenshots"),
-                    os.path.join(home_dir, "Pictures"),
-                    os.path.join(home_dir, "Desktop"),
-                    os.path.join(home_dir, "Documents"),
-                    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "instance", "uploads")),
-                    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "instance", "storage")),
-                ]
-                for cdir in candidate_dirs:
-                    cand_path = os.path.join(cdir, image_ref)
-                    if os.path.exists(cand_path) and os.path.isfile(cand_path):
-                        with open(cand_path, "rb") as f:
-                            return f.read()
 
                 # 4. Check FolderDocument record by original_filename or storage_path
                 try:
@@ -529,9 +549,6 @@ class DocumentationService:
                         (FolderDocument.original_filename == image_ref) | (FolderDocument.storage_path == image_ref)
                     ).first()
                     if doc_record and doc_record.storage_path:
-                        if os.path.exists(doc_record.storage_path):
-                            with open(doc_record.storage_path, "rb") as f:
-                                return f.read()
                         return FirebaseStorageService.get_file_bytes(doc_record.storage_path)
                 except Exception as doc_err:
                     logger.debug("FolderDocument lookup notice for %s: %s", image_ref, doc_err)
@@ -543,9 +560,6 @@ class DocumentationService:
                         (MediaFile.original_filename == image_ref) | (MediaFile.storage_path == image_ref)
                     ).first()
                     if media_record and media_record.storage_path:
-                        if os.path.exists(media_record.storage_path):
-                            with open(media_record.storage_path, "rb") as f:
-                                return f.read()
                         return FirebaseStorageService.get_file_bytes(media_record.storage_path)
                 except Exception as med_err:
                     logger.debug("MediaFile lookup notice for %s: %s", image_ref, med_err)

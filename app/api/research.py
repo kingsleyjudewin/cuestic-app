@@ -3,12 +3,14 @@ Flask Blueprint for Research Management System API.
 Handles Faculty Coordinator and Student Researcher portal interactions,
 enforcing RBAC, IDOR protection, and consistent response formatting.
 """
+import io
 import os
 import uuid
 from flask import Blueprint, request, g, send_file, current_app
 from werkzeug.utils import secure_filename
 
-from app.extensions import db
+from app.extensions import db, limiter
+from app.services.auth_service import AuthService
 from app.models.user import User
 from app.models.research import (
     ResearchAttachment,
@@ -21,10 +23,17 @@ from app.services.research_service import (
     ResearchPermissionError,
     ResearchNotFoundError,
 )
+from app.services.firebase_storage_service import FirebaseStorageService
 from app.utils.permissions import token_required, roles_required
 from app.utils.errors import success_response, ValidationError, NotFoundError, PermissionDeniedError
 
 research_bp = Blueprint("research", __name__)
+
+RESEARCH_ALLOWED_EXTENSIONS = {
+    "pdf", "doc", "docx", "xls", "xlsx", "csv", "ppt", "pptx", "txt", "md", "tex", "bib",
+    "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff",
+    "zip", "gz", "tar", "7z", "json", "ipynb", "py", "m", "mat", "hdr", "npy", "npz", "parquet", "h5",
+}
 
 
 def handle_service_error(e: Exception):
@@ -70,6 +79,7 @@ def update_faculty_profile():
 
 
 @research_bp.route("/auth/first-login-password", methods=["POST"])
+@limiter.limit("10 per minute;30 per hour")
 @token_required
 def first_login_password_change():
     """
@@ -78,27 +88,27 @@ def first_login_password_change():
     """
     user = g.current_user
     data = request.get_json() or {}
-    curr_pass = (data.get("current_password") or "").strip()
-    new_pass = (data.get("new_password") or "").strip()
+    curr_pass = data.get("current_password") or ""
+    new_pass = data.get("new_password") or ""
 
     if not curr_pass or not new_pass:
         raise ValidationError("Both current password and new password are required.")
 
-    try:
-        updated_user = ResearchService.change_first_login_password(
-            user_id=user.id,
-            current_password=curr_pass,
-            new_password=new_pass,
-        )
-        return success_response(
-            data={"user": updated_user},
-            message="Password successfully updated. Account setup is complete."
-        )
-    except Exception as e:
-        handle_service_error(e)
+    result = AuthService.change_password(
+        user=user,
+        current_password=curr_pass,
+        new_password=new_pass,
+        confirm_password=data.get("confirm_password"),
+        keep_token_id=g.current_token.id if g.current_token else None,
+    )
+    return success_response(
+        data={"user": result["user"]},
+        message="Password successfully updated. Account setup is complete."
+    )
 
 
 @research_bp.route("/auth/change-password", methods=["POST"])
+@limiter.limit("10 per minute;30 per hour")
 @token_required
 def change_password():
     """
@@ -106,24 +116,23 @@ def change_password():
     """
     user = g.current_user
     data = request.get_json() or {}
-    curr_pass = (data.get("current_password") or "").strip()
-    new_pass = (data.get("new_password") or "").strip()
+    curr_pass = data.get("current_password") or ""
+    new_pass = data.get("new_password") or ""
 
     if not curr_pass or not new_pass:
         raise ValidationError("Both current password and new password are required.")
 
-    try:
-        updated_user = ResearchService.change_password(
-            user_id=user.id,
-            current_password=curr_pass,
-            new_password=new_pass,
-        )
-        return success_response(
-            data={"user": updated_user},
-            message="Password updated successfully."
-        )
-    except Exception as e:
-        handle_service_error(e)
+    result = AuthService.change_password(
+        user=user,
+        current_password=curr_pass,
+        new_password=new_pass,
+        confirm_password=data.get("confirm_password"),
+        keep_token_id=g.current_token.id if g.current_token else None,
+    )
+    return success_response(
+        data={"user": result["user"]},
+        message="Password updated successfully. Other devices have been signed out."
+    )
 
 
 @research_bp.route("/students/<int:student_id>/password", methods=["POST", "PUT"])
@@ -506,6 +515,7 @@ def add_feedback_message(task_id: int):
 def upload_research_attachment():
     """
     Multipart upload for research deliverables (papers, datasets, reports).
+    Files go to persistent storage (Firebase Storage or the configured storage disk).
     """
     if "file" not in request.files:
         raise ValidationError("No file provided in multipart upload.", details={"file": ["Required"]})
@@ -514,21 +524,28 @@ def upload_research_attachment():
     if not file or not file.filename:
         raise ValidationError("Selected file is empty.", details={"file": ["Invalid"]})
 
-    filename = secure_filename(file.filename)
-    unique_name = f"{uuid.uuid4().hex[:12]}_{filename}"
-
-    upload_folder = os.path.join(current_app.root_path, "..", "uploads", "research")
-    os.makedirs(upload_folder, exist_ok=True)
-    file_path = os.path.join(upload_folder, unique_name)
-    file.save(file_path)
-
-    size = os.path.getsize(file_path)
+    filename = secure_filename(file.filename) or "attachment"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in RESEARCH_ALLOWED_EXTENSIONS:
+        raise ValidationError(
+            f"File type '.{ext or '?'}' is not allowed for research attachments.",
+            details={"file": [f"Allowed: {', '.join(sorted(RESEARCH_ALLOWED_EXTENSIONS))}"]},
+        )
+
+    # The uploader id is part of the name so ownership can be checked on download.
+    unique_name = f"u{g.current_user.id}_{uuid.uuid4().hex[:12]}_{filename}"
+    storage_key = f"research/{unique_name}"
+
+    file.stream.seek(0, os.SEEK_END)
+    size = file.stream.tell()
+    file.stream.seek(0)
+
+    FirebaseStorageService.put_object(storage_key, file.stream, file.mimetype or "application/octet-stream")
 
     return success_response(
         data={
             "file_name": filename,
-            "storage_path": f"/uploads/research/{unique_name}",
+            "storage_path": storage_key,
             "file_size": size,
             "file_type": ext or "document",
             "file_url": f"/api/v1/research/attachments/file/{unique_name}",
@@ -538,14 +555,50 @@ def upload_research_attachment():
     )
 
 
+def _can_download_research_file(user: User, unique_name: str) -> bool:
+    """Admins, the uploader, and members/faculty of a project that references the file."""
+    if user.is_admin() or unique_name.startswith(f"u{user.id}_"):
+        return True
+    refs = ResearchAttachment.query.filter(
+        ResearchAttachment.storage_path.endswith(unique_name, autoescape=True)
+    ).all()
+    for att in refs:
+        if att.uploaded_by_user_id == user.id:
+            return True
+        try:
+            ResearchService.get_project_details(att.project_id, user.id)
+            return True
+        except Exception:
+            continue
+    return False
+
+
 @research_bp.route("/attachments/file/<filename>", methods=["GET"])
+@token_required
 def download_attachment_by_filename(filename: str):
     clean = secure_filename(filename)
-    upload_folder = os.path.join(current_app.root_path, "..", "uploads", "research")
-    path = os.path.join(upload_folder, clean)
-    if not os.path.exists(path):
+    if not clean:
         raise NotFoundError("Attachment file not found.")
-    return send_file(path)
+    if not _can_download_research_file(g.current_user, clean):
+        raise PermissionDeniedError("You do not have access to this attachment.")
+
+    try:
+        data = FirebaseStorageService.get_file_bytes(f"research/{clean}")
+    except NotFoundError:
+        # Files uploaded before persistent storage was introduced.
+        legacy_path = os.path.realpath(os.path.join(current_app.root_path, "..", "uploads", "research", clean))
+        if not os.path.isfile(legacy_path):
+            raise NotFoundError("Attachment file not found.")
+        with open(legacy_path, "rb") as fh:
+            data = fh.read()
+
+    original = clean.split("_", 2)[-1] if clean.startswith("u") and clean.count("_") >= 2 else clean
+    return send_file(
+        io.BytesIO(data),
+        mimetype="application/octet-stream",
+        as_attachment=True,
+        download_name=original,
+    )
 
 
 # -----------------------------------------------------------------------------

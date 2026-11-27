@@ -25,11 +25,21 @@ database/backups/
 
 # Environment and secrets
 .env
+.env.*
 !.env.example
 *-firebase-adminsdk-*.json
+*service-account*.json
 *.pem
 *.key
+*.jks
+*.keystore
+key.properties
 *credentials.txt
+rotated_credentials_*.csv
+leaked_passwords*.txt
+
+# Runtime uploads (persistent files live in Firebase Storage / a mounted disk)
+uploads/
 
 
 # Distribution / packaging

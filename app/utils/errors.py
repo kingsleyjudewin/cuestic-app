@@ -46,6 +46,12 @@ class PermissionDeniedError(AppError):
     code = "FORBIDDEN"
 
 
+class PasswordChangeRequiredError(AppError):
+    """Account must set a new password before using any other endpoint."""
+    status_code = 403
+    code = "PASSWORD_CHANGE_REQUIRED"
+
+
 class NotFoundError(AppError):
     status_code = 404
     code = "NOT_FOUND"

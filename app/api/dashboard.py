@@ -1,5 +1,8 @@
 from flask import Blueprint, g
 from datetime import timedelta
+from sqlalchemy import and_, case, func, select
+from sqlalchemy.orm import joinedload
+from app.extensions import db
 from app.models.event import Event
 from app.models.member import Member
 from app.models.task import Task
@@ -41,29 +44,35 @@ def get_summary():
         members_query = members_query.filter(Member.team_id.in_(led_team_ids))
         assignments_query = assignments_query.join(Member).filter(Member.team_id.in_(led_team_ids))
 
-    active_events_count = events_query.count()
-    active_members_count = members_query.count()
+    # All counters in ONE round trip (scalar subqueries + conditional aggregation) instead of six.
+    active_cond = TaskAssignment.status.in_(TaskAssignment.ACTIVE_STATUSES)
+    assignment_counts = assignments_query.with_entities(
+        func.count(case((active_cond, 1))).label("active"),
+        func.count(case((TaskAssignment.status == TaskAssignment.STATUS_AWAITING_CONFIRMATION, 1))).label("awaiting"),
+        func.count(case((TaskAssignment.status == TaskAssignment.STATUS_COMPLETED, 1))).label("completed"),
+        func.count(case((and_(active_cond, Task.deadline < now), 1))).label("overdue"),
+    ).subquery()
+    counts = db.session.execute(
+        select(
+            events_query.with_entities(func.count(Event.id)).scalar_subquery().label("events"),
+            members_query.with_entities(func.count(Member.id)).scalar_subquery().label("members"),
+            assignment_counts.c.active,
+            assignment_counts.c.awaiting,
+            assignment_counts.c.completed,
+            assignment_counts.c.overdue,
+        )
+    ).one()
 
-    active_assignments_count = assignments_query.filter(
-        TaskAssignment.status.in_(TaskAssignment.ACTIVE_STATUSES)
-    ).count()
+    active_events_count = int(counts.events or 0)
+    active_members_count = int(counts.members or 0)
+    active_assignments_count = int(counts.active or 0)
+    awaiting_confirmations_count = int(counts.awaiting or 0)
+    completed_assignments_count = int(counts.completed or 0)
+    overdue_assignments_count = int(counts.overdue or 0)
 
-    awaiting_confirmations_count = assignments_query.filter(
-        TaskAssignment.status == TaskAssignment.STATUS_AWAITING_CONFIRMATION
-    ).count()
-
-    completed_assignments_count = assignments_query.filter(
-        TaskAssignment.status == TaskAssignment.STATUS_COMPLETED
-    ).count()
-
-    overdue_assignments_count = assignments_query.filter(
-        TaskAssignment.status.in_(TaskAssignment.ACTIVE_STATUSES),
-        Task.deadline < now
-    ).count()
-
-    # Upcoming deadlines within next 48 hours
+    # Upcoming deadlines within next 48 hours (event eager-loaded: no per-task query)
     upcoming_window = now + timedelta(hours=48)
-    upcoming_tasks = Task.query.filter(
+    upcoming_tasks = Task.query.options(joinedload(Task.event)).filter(
         Task.is_cancelled == False,
         Task.deadline >= now,
         Task.deadline <= upcoming_window

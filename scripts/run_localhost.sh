@@ -17,10 +17,11 @@ fuser -k 8080/tcp 2>/dev/null || true
 # 2. Check Flutter web build exists, build if missing
 if [ ! -f "frontend/build/web/index.html" ]; then
     echo "[2/4] Frontend build missing. Compiling Flutter Web..."
-    cd frontend && /home/kingsley-judewin/flutter/bin/flutter build web && cd "$PROJECT_DIR"
+    cd frontend && /home/kingsley-judewin/flutter/bin/flutter build web --pwa-strategy=none --dart-define=API_BASE_URL=http://127.0.0.1:5000/api/v1 --dart-define=ALLOW_LOCAL_API=true && cd "$PROJECT_DIR"
 else
     echo "[2/4] Frontend web bundle found."
 fi
+.venv/bin/python scripts/postbuild_web.py frontend/build/web
 
 # 3. Start Flask Backend Server in background
 echo "[3/4] Starting Flask Backend on http://127.0.0.1:5000..."
@@ -40,7 +41,7 @@ done
 
 # 4. Start Frontend Web Server in background
 echo "[4/4] Starting Frontend Web Server on http://localhost:8080..."
-nohup .venv/bin/python -m http.server 8080 --directory frontend/build/web --bind 0.0.0.0 > instance/frontend.log 2>&1 < /dev/null &
+nohup .venv/bin/python scripts/serve_web.py frontend/build/web 8080 > instance/frontend.log 2>&1 < /dev/null &
 FRONTEND_PID=$!
 echo "      Frontend started (PID: $FRONTEND_PID, logs: instance/frontend.log)"
 

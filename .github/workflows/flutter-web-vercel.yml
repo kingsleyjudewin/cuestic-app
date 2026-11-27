@@ -1,0 +1,75 @@
+name: Flutter Web → Vercel
+
+# Builds the Flutter web app with the production API URL and deploys the static output to Vercel.
+# Required repository settings (Settings → Secrets and variables → Actions):
+#   Variables: API_BASE_URL        e.g. https://cuestic-api.onrender.com/api/v1
+#   Secrets:   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+
+on:
+  push:
+    branches: [main]
+    paths: ["frontend/**", "vercel.json", "scripts/postbuild_web.py", "scripts/kill_stale_service_worker.js", ".github/workflows/flutter-web-vercel.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-production
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.47.8"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check production API URL
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          case "$API_BASE_URL" in
+            https://*) echo "API_BASE_URL is set" ;;
+            *) echo "::error::Repository variable API_BASE_URL must be set to the HTTPS Render URL (…/api/v1)"; exit 1 ;;
+          esac
+          case "$API_BASE_URL" in
+            *localhost*|*127.0.0.1*) echo "::error::API_BASE_URL must not point to localhost"; exit 1 ;;
+          esac
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+
+      - name: Build web (release)
+        run: flutter build web --release --dart-define=API_BASE_URL=${{ vars.API_BASE_URL }}
+
+      - name: Cache-bust bundle and add Vercel config
+        working-directory: .
+        run: |
+          python3 scripts/postbuild_web.py frontend/build/web
+          cp vercel.json frontend/build/web/vercel.json
+
+      - name: Deploy to Vercel (production)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_ORG_ID" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::error::Set VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID repository secrets."; exit 1
+          fi
+          url=$(npx --yes vercel@latest deploy build/web --prod --yes --token "$VERCEL_TOKEN")
+          echo "Deployed: $url"
+          echo "### Vercel deployment: $url" >> "$GITHUB_STEP_SUMMARY"

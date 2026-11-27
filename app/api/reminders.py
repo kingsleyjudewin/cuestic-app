@@ -1,5 +1,6 @@
 from flask import Blueprint, request, g
 from datetime import timezone
+from app.extensions import db
 from app.models.reminder import Reminder
 from app.models.task_assignment import TaskAssignment
 from app.schemas.reminder import ReminderCreateSchema
@@ -164,15 +165,21 @@ def create_assignment_reminder(assignment_id: int):
 
     dedup_key = f"manual:{assignment.id}:{data['reminder_type']}:{scheduled_at.strftime('%Y%m%d%H%M%S')}"
 
+    pending_notifications = []
     created = ReminderService._create_reminder_if_absent(
         assignment_id=assignment.id,
         reminder_type=data["reminder_type"],
         scheduled_at=scheduled_at,
-        deduplication_key=dedup_key
+        deduplication_key=dedup_key,
+        pending_notifications=pending_notifications,
     )
 
     if not created:
         raise ValidationError("A duplicate reminder with the exact key already exists.")
+
+    # Persist first, then notify, so a failed commit never produces a stray notification.
+    db.session.commit()
+    ReminderService.send_pending_notifications(pending_notifications)
 
     reminder = Reminder.query.filter_by(deduplication_key=dedup_key).first()
     return success_response(data=reminder.to_dict(), message="Reminder scheduled successfully.", status_code=201)

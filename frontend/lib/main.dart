@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'config/app_theme.dart';
+import 'config/constants.dart';
 import 'screens/assignment_detail_screen.dart';
 import 'screens/assignment_message_screen.dart';
 import 'screens/assignment_tracking_screen.dart';
@@ -15,7 +16,7 @@ import 'screens/documentation_portal_screen.dart';
 import 'screens/media_dashboard_screen.dart';
 import 'screens/mc_dashboard_screen.dart';
 import 'screens/community_screen.dart';
-import 'screens/first_login_password_screen.dart';
+import 'screens/mandatory_password_change_screen.dart';
 import 'screens/faculty_dashboard_screen.dart';
 import 'screens/student_researcher_dashboard_screen.dart';
 import 'services/api_client.dart';
@@ -30,6 +31,15 @@ import 'services/research_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Refuse to start a build whose compiled-in backend URL is unusable (e.g. a release build
+  // that still points at 127.0.0.1), instead of failing on every request later.
+  final configError = ApiConfig.configurationError;
+  if (configError != null) {
+    debugPrint('Invalid API configuration: $configError');
+    runApp(ConfigurationErrorApp(message: configError));
+    return;
+  }
 
   // Initialize SQLite FFI on desktop platforms (Linux, macOS, Windows)
   if (!kIsWeb &&
@@ -101,6 +111,7 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
   void initState() {
     super.initState();
     widget.authService.addListener(_onAuthChanged);
+    _wasPasswordChangeRequired = widget.authService.isAuthenticated && widget.authService.mustChangePassword;
   }
 
   @override
@@ -109,8 +120,19 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
     super.dispose();
   }
 
+  bool _wasPasswordChangeRequired = false;
+
   void _onAuthChanged() {
+    final required = widget.authService.isAuthenticated && widget.authService.mustChangePassword;
     setState(() {});
+    // The server reported (403 PASSWORD_CHANGE_REQUIRED) that a new password is needed while a
+    // pushed screen is open: drop every route so the blocking password screen is all that remains.
+    if (required && !_wasPasswordChangeRequired) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.navigatorKey.currentState?.pushNamedAndRemoveUntil('/', (route) => false);
+      });
+    }
+    _wasPasswordChangeRequired = required;
   }
 
   void _handleLogout() async {
@@ -227,9 +249,8 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
     }
 
     if (widget.authService.mustChangePassword) {
-      return FirstLoginPasswordScreen(
+      return MandatoryPasswordChangeScreen(
         authService: widget.authService,
-        researchService: widget.researchService,
         onPasswordChanged: () {
           setState(() {});
           widget.navigatorKey.currentState?.pushNamedAndRemoveUntil('/', (route) => false);
@@ -372,12 +393,7 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
             ),
           );
         } else if (settings.name == '/change_password') {
-          return MaterialPageRoute(
-            builder: (context) => FirstLoginPasswordScreen(
-              authService: widget.authService,
-              researchService: widget.researchService,
-            ),
-          );
+          return MaterialPageRoute(builder: (context) => _buildHomeScreen());
         } else if (settings.name == '/assignment_detail') {
           final id = settings.arguments as int;
           return MaterialPageRoute(
@@ -416,6 +432,42 @@ class _DepartmentClubAppState extends State<DepartmentClubApp> {
         }
         return null;
       },
+    );
+  }
+}
+
+
+/// Shown instead of the app when the build's API configuration is invalid.
+class ConfigurationErrorApp extends StatelessWidget {
+  final String message;
+  const ConfigurationErrorApp({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off, size: 48, color: Color(0xFFDC2626)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'App configuration error',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -182,10 +182,14 @@ def test_report_draft_lifecycle(client, doc_setup):
     assert "Main Auditorium, Room 101" in table_0_text
     assert "Quantum AI Workshop 2026" in table_0_text
 
-    # Check Table 1 has dynamic speaker rows (2 speakers)
-    speaker_table_text = "".join(cell.text for row in doc.tables[1].rows for cell in row.cells)
-    assert "Dr. Sarah Connor" in speaker_table_text
-    assert "Prof. Alan Turing" in speaker_table_text
+    # Each speaker gets its own 4-row table (Tables 1 and 2) under a numbered "Speaker Details N" heading
+    assert len(doc.tables[1].rows) == 4 and len(doc.tables[2].rows) == 4
+    spk1_text = "".join(cell.text for row in doc.tables[1].rows for cell in row.cells)
+    spk2_text = "".join(cell.text for row in doc.tables[2].rows for cell in row.cells)
+    assert "Dr. Sarah Connor" in spk1_text
+    assert "Prof. Alan Turing" in spk2_text
+    heading_texts = [p.text.strip() for p in doc.paragraphs]
+    assert "Speaker Details 1" in heading_texts and "Speaker Details 2" in heading_texts
 
     # 8. Delete Report Draft
     del_res = client.delete(f"/api/v1/documentation/reports/{report_id}", headers=headers)

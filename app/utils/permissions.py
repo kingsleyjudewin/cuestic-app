@@ -1,17 +1,38 @@
 import time
 from functools import wraps
 from datetime import timezone
-from flask import request, g
+from flask import request, g, current_app
+from sqlalchemy import select
 from app.extensions import db
 from app.models.user import User, ApiToken
 from app.utils.datetime_utils import utc_now
-from app.utils.errors import AuthenticationError, PermissionDeniedError
+from app.utils.errors import AuthenticationError, PermissionDeniedError, PasswordChangeRequiredError
 from sqlalchemy.orm import joinedload
 
 # Thread-safe in-memory token authentication cache
 # Cache layout: token_hash -> dict(user_id, token_id, expires_at, cached_time, last_used_time)
 _TOKEN_CACHE: dict[str, dict] = {}
 _TOKEN_CACHE_TTL = 900  # 15 minutes TTL
+
+
+# Endpoints an account with a pending mandatory password change may still call. Everything else
+# that uses @token_required (directly or via roles_required/admin_required) answers HTTP 403
+# PASSWORD_CHANGE_REQUIRED. Endpoint names are "<blueprint>.<view function>".
+PASSWORD_CHANGE_ALLOWED_ENDPOINTS = frozenset({
+    "auth.me",
+    "auth.logout",
+    "auth.change_password",
+    "research.first_login_password_change",  # used by already-installed app versions
+    "research.change_password",
+})
+
+
+def _enforce_password_change(user):
+    if user.requires_password_change and request.endpoint not in PASSWORD_CHANGE_ALLOWED_ENDPOINTS:
+        raise PasswordChangeRequiredError(
+            "Change your password before accessing this resource.",
+            details={"change_password_endpoint": "/api/v1/auth/change-password"},
+        )
 
 
 def invalidate_token_cache(token_hash: str = None, user_id: int = None):
@@ -33,6 +54,8 @@ def cache_token(token_hash: str, token_obj, user):
     now_ts = time.time()
     _TOKEN_CACHE[token_hash] = {
         "user_id": user.id,
+        "role": user.role,
+        "pcr": bool(user.password_change_required),
         "token_id": token_obj.id,
         "expires_at": token_obj.expires_at,
         "user": user,
@@ -40,6 +63,32 @@ def cache_token(token_hash: str, token_obj, user):
         "cached_time": now_ts,
         "last_used_time": utc_now(),
     }
+
+
+def _cached_entry_is_stale(cached: dict) -> bool:
+    """
+    Cheap cross-process revalidation of a cached token (one indexed lookup).
+
+    The in-memory cache lives inside a single server process. Without this check a logout,
+    password change or account deactivation handled by another worker/instance would only take
+    effect after the cache TTL. Disable with AUTH_CACHE_REVALIDATE=false if needed.
+    """
+    try:
+        if not current_app.config.get("AUTH_CACHE_REVALIDATE", True):
+            return False
+        row = db.session.execute(
+            select(ApiToken.is_revoked, User.is_active, User.role, User.password_change_required)
+            .join(User, User.id == ApiToken.user_id)
+            .where(ApiToken.id == cached["token_id"])
+        ).first()
+    except Exception:
+        db.session.rollback()
+        return True  # cannot verify: fall back to the full lookup path
+    cached_role = cached.get("role")
+    # Stale entries fall through to the full lookup, which rejects the token or refreshes the cache.
+    return row is None or row.is_revoked or not row.is_active or (
+        cached_role is not None and row.role != cached_role
+    ) or bool(row.password_change_required) != bool(cached.get("pcr", row.password_change_required))
 
 
 def token_required(f):
@@ -59,7 +108,7 @@ def token_required(f):
         now_ts = time.time()
         cached = _TOKEN_CACHE.get(token_hash)
 
-        if cached and (now_ts - cached["cached_time"] < _TOKEN_CACHE_TTL):
+        if cached and (now_ts - cached["cached_time"] < _TOKEN_CACHE_TTL) and not _cached_entry_is_stale(cached):
             # Check expiration
             exp = cached.get("expires_at")
             if exp:
@@ -90,6 +139,7 @@ def token_required(f):
 
             g.current_user = user
             g.current_token = token_record
+            _enforce_password_change(user)
             return f(*args, **kwargs)
 
         # Uncached or expired cache: perform 1 single eager joined query
@@ -118,6 +168,8 @@ def token_required(f):
 
         _TOKEN_CACHE[token_hash] = {
             "user_id": user.id,
+            "role": user.role,
+            "pcr": bool(user.password_change_required),
             "token_id": token_record.id,
             "user": user,
             "token_record": token_record,
@@ -128,6 +180,7 @@ def token_required(f):
 
         g.current_user = user
         g.current_token = token_record
+        _enforce_password_change(user)
 
         return f(*args, **kwargs)
 

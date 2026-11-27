@@ -1,0 +1,80 @@
+# Render Blueprint for the backend API. See DEPLOYMENT.md for the full walkthrough.
+# Values marked `sync: false` are secrets: Render asks for them when the Blueprint is created;
+# they are never stored in this repository.
+services:
+  - type: web
+    name: cuestic-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Same AWS region as the Neon database (us-east-2): ~1 ms per query instead of ~230 ms.
+    region: ohio
+    # FREE plan (512 MB, sleeps after 15 min idle). Attendance OCR is disabled (ENABLE_OCR=false)
+    # because one OCR run peaks around 630 MB. For production use, switch to `plan: standard`
+    # (2 GB), set ENABLE_OCR=true and re-add `preDeployCommand: flask db upgrade` (paid plans only).
+    # On the free plan run migrations manually: `flask db upgrade` with DATABASE_URL pointing at Neon.
+    plan: free
+    numInstances: 1
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false # Neon *pooled* connection string (host contains -pooler), sslmode=require
+      - key: CORS_ORIGINS
+        sync: false # e.g. https://cuestic.vercel.app (comma-separated, no trailing slash)
+      - key: CORS_ORIGIN_REGEX
+        sync: false # optional, for Vercel previews: ^https://cuestic-[a-z0-9-]+\.vercel\.app$
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: GUNICORN_THREADS
+        value: "6"
+      - key: GUNICORN_TIMEOUT
+        value: "120"
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "5"
+      - key: ENABLE_BACKGROUND_SCHEDULER
+        value: "true"
+      - key: MAX_CONCURRENT_HEAVY_JOBS
+        value: "1"
+      - key: MAX_CONCURRENT_AI_JOBS
+        value: "2"
+      - key: ENABLE_OCR
+        value: "false" # free plan: OCR would exceed 512 MB
+      - key: APP_TIMEZONE
+        value: Asia/Kolkata
+      - key: TOKEN_EXPIRY_DAYS
+        value: "30"
+      # --- File storage (choose one; see DEPLOYMENT.md "File storage") ---
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false # e.g. club-management-cuestic.firebasestorage.app
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /etc/secrets/firebase-service-account.json # Render Secret File
+      - key: LEAKED_PASSWORD_HASHES_FILE
+        value: /etc/secrets/leaked_password_hashes.txt # optional Secret File (flask password-hashes); ignored if absent
+      - key: DEFAULT_MEDIA_STORAGE
+        sync: false # "google_drive" to keep media in Drive, otherwise Firebase Storage
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false # https://<service>.onrender.com/api/v1/media/drive/callback
+      # --- AI providers ---
+      - key: AI_PROVIDER
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        sync: false
+      - key: GROK_API_KEY
+        sync: false
+      - key: GROK_MODEL
+        sync: false

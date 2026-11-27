@@ -25,6 +25,7 @@ from app.models.task import Task
 from app.models.task_assignment import TaskAssignment
 from app.models.user import User
 from app.models.team import Team
+from app.utils.visitor_mode import caching_allowed
 from app.models.member import Member
 from app.models.documentation import EventFolder, FolderDocument
 from app.services.firebase_storage_service import FirebaseStorageService
@@ -86,6 +87,11 @@ class McScriptService:
         team = Team.query.filter(
             (Team.slug == "mc") | (Team.name.ilike("%mc%")) | (Team.name.ilike("%master of ceremonies%"))
         ).first()
+
+        if not team and not caching_allowed():
+            # Visitor request: can't create the team, so act as if it exists and is empty (an
+            # unsaved Team has no id, so every "content of this team" query matches nothing).
+            return Team(name="MC Team", slug="mc", is_active=True)
 
         if not team:
             team = Team(
@@ -1116,7 +1122,7 @@ class McScriptService:
     def list_folders(cls, user: User) -> List[dict]:
         """List folders belonging to the MC Team with grouped count optimization and caching."""
         now_ts = time.time()
-        cached = cls._FOLDERS_CACHE.get("all")
+        cached = cls._FOLDERS_CACHE.get("all") if caching_allowed() else None
         if cached and (now_ts - cached[0] < cls._CACHE_TTL):
             return cached[1]
 
@@ -1136,7 +1142,8 @@ class McScriptService:
             fd["script_count"] = script_counts.get(f.id, 0)
             result.append(fd)
 
-        cls._FOLDERS_CACHE["all"] = (now_ts, result)
+        if caching_allowed():
+            cls._FOLDERS_CACHE["all"] = (now_ts, result)
         return result
 
     @classmethod

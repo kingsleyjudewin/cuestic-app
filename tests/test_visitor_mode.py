@@ -59,11 +59,17 @@ def test_visitor_login_returns_visitor_flag(client, visitor):
 
 
 def test_visitor_sees_empty_workspace(client, visitor, real_data):
-    for path in ("/api/v1/events", "/api/v1/members", "/api/v1/teams", "/api/v1/mc/events",
-                 "/api/v1/communities"):
+    for path in ("/api/v1/events", "/api/v1/members", "/api/v1/mc/events", "/api/v1/communities"):
         resp = client.get(path, headers=visitor["headers"])
         assert resp.status_code == 200, (path, resp.get_json())
         assert _items(resp) == [], path
+
+    # Team names are visible (screens look their team up), but nothing inside them is.
+    teams = client.get("/api/v1/teams", headers=visitor["headers"])
+    assert teams.status_code == 200
+    for team in _items(teams):
+        assert team.get("member_count", 0) == 0
+        assert team.get("leader_name") is None
 
     dash = client.get("/api/v1/dashboard/summary", headers=visitor["headers"])
     assert dash.status_code == 200
@@ -222,3 +228,41 @@ def test_visitor_still_cannot_create_scripts_or_templates(client, visitor, templ
                           ("/api/v1/documentation/reports", {"title": "x"})):
         r = client.post(path, json=payload, headers=visitor["headers"])
         assert r.status_code == 403, (path, r.get_json())
+
+
+# Parameterless GET endpoints that legitimately refuse a visitor for the same reason they refuse a
+# real admin (role-specific portals, OAuth callbacks, query parameters that weren't supplied).
+_EXPECTED_REFUSALS = {
+    "auth.verify_setup_token", "media.drive_auth_url", "media.drive_oauth_callback",
+    "research.student_overview", "research.get_student_directory", "research.list_teams",
+    "assignments.list_my_assignments", "me.get_my_assignments",
+}
+
+
+def test_visitor_screens_load_without_errors(app, client, visitor, real_data, templates):
+    """Every screen's list endpoint answers a visitor normally (no 'team not found' or read-only errors)."""
+    failures = []
+    for rule in app.url_map.iter_rules():
+        if ("GET" not in rule.methods or not rule.rule.startswith("/api/v1/") or "<" in rule.rule
+                or "docs" in rule.rule or rule.endpoint in _EXPECTED_REFUSALS):
+            continue
+        db.session.remove()
+        resp = client.get(rule.rule, headers=visitor["headers"])
+        if resp.status_code >= 400:
+            failures.append(f"{rule.rule}: HTTP {resp.status_code} {resp.get_data(as_text=True)[:120]}")
+    assert not failures, "\n".join(failures)
+
+
+def test_visitor_never_sees_cached_mc_folders(client, visitor, real_data, admin_user):
+    from app.models.documentation import EventFolder
+    from app.services.mc_script_service import McScriptService
+    team = McScriptService.get_or_create_mc_team()
+    db.session.add(EventFolder(name="Rohan MC Folder", team_id=team.id, created_by=admin_user["user"].id))
+    db.session.commit()
+    db.session.remove()
+    McScriptService._FOLDERS_CACHE.clear()
+    assert client.get("/api/v1/mc/folders", headers=admin_user["headers"]).status_code == 200  # warms cache
+    db.session.remove()
+    resp = client.get("/api/v1/mc/folders", headers=visitor["headers"])
+    assert resp.status_code == 200
+    assert "Rohan" not in resp.get_data(as_text=True)

@@ -8,8 +8,10 @@ administrator, so no separate screens exist. The server keeps it isolated from r
   on every table, so lists come back empty, counts are zero and detail lookups 404. The one
   exception is the visitor's own ``users`` row and ``api_tokens`` rows, which login, ``/auth/me``
   and logout need.
-* Shared reference data: the built-in (``is_default``) MC templates and their segments are
-  readable, so the template picker and programme builder have something to show.
+* Shared reference data: the built-in (``is_default``) MC templates and their segments, and the
+  ``teams`` rows themselves (name, slug, description), are readable. Many screens first look up
+  their team (Documentation, Media, MC) and fail with "team not found" without it. Everything
+  belonging to a team (members, folders, reports, scripts) stays hidden.
 * AI tools: the stateless AI endpoints (MC script/segment generation, rewrite, report AI assist,
   poster analysis) accept POSTs from a visitor, because they only return generated text and save
   nothing. Database writes stay blocked during those requests too. They are capped per visitor
@@ -135,6 +137,7 @@ def _visitor_criteria(user_id: int):
     from app.extensions import db
     from app.models.user import User, ApiToken
     from app.models.mc_script import McTemplate, McTemplateSegment
+    from app.models.team import Team
 
     default_template_ids = db.select(McTemplate.id).where(McTemplate.is_default.is_(True))
     options = []
@@ -144,6 +147,8 @@ def _visitor_criteria(user_id: int):
             crit = User.id == user_id
         elif cls is ApiToken:
             crit = ApiToken.user_id == user_id
+        elif cls is Team:
+            continue  # team names only; their members and content are filtered below
         elif cls is McTemplate:
             crit = McTemplate.is_default.is_(True)
         elif cls is McTemplateSegment:

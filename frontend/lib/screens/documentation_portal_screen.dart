@@ -382,6 +382,23 @@ class _DocumentationPortalScreenState extends State<DocumentationPortalScreen>
 
     if (title == null || title.isEmpty) return;
 
+    if (widget.authService.isVisitor) {
+      // Visitor mode can't save reports: open an unsaved draft so the editor and AI copilot can be tried.
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (ctx) => ActivityReportEditorScreen(
+              initialTitle: title,
+              docService: _docService,
+              authService: widget.authService,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     try {
       final rep = await _docService.createReport(title: title);
       _loadReports();

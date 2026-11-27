@@ -103,6 +103,7 @@ class Config:
     # Visitor (demo) accounts: comma-separated usernames that explore the admin UI on an empty,
     # read-only workspace. See app/utils/visitor_mode.py. Create one with `flask create-visitor`.
     VISITOR_USERNAMES = os.environ.get("VISITOR_USERNAMES", "visitor")
+    VISITOR_AI_CALLS_PER_HOUR = int(os.environ.get("VISITOR_AI_CALLS_PER_HOUR", "20"))
 
     # Security headers / HTTPS
     ENABLE_HSTS = False

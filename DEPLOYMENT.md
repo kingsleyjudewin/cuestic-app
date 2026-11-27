@@ -318,6 +318,11 @@ A shared login that sees the admin screens on an **empty, read-only** workspace.
 own user row), every write answers `403 VISITOR_READ_ONLY`, and the in-memory caches are bypassed, so no real
 data is ever served to it. The app shows a yellow "Visitor mode" strip.
 
+What a visitor *can* use: the built-in MC templates (read-only), and the AI tools, which return generated
+text and save nothing (MC script/segment generation, rewrite, report AI copilot, poster analysis, feedback
+analysis and simulations). "New script" and "New report" open an unsaved draft in the editor so these can
+be tried. AI calls are capped at `VISITOR_AI_CALLS_PER_HOUR` (default 20) per visitor account.
+
 Which usernames count as visitors is set by `VISITOR_USERNAMES` (default `visitor`, comma-separated). Create or
 reset the account against the production database once (Render free plan has no shell, so run it locally with
 `DATABASE_URL` pointing at Neon):

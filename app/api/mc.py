@@ -547,7 +547,7 @@ def create_template():
     """Create a new reusable MC programme template."""
     data = request.get_json(silent=True) or {}
     template = McTemplateService.create_template(data, g.current_user)
-    return success_response(data=template.to_dict(), message="Template created successfully.", status_code=201)
+    return success_response(data=template, message="Template created successfully.", status_code=201)
 
 
 @mc_bp.route("/templates/<int:template_id>", methods=["GET"])
@@ -555,7 +555,7 @@ def create_template():
 def get_template(template_id: int):
     """Get template details with all segments."""
     template = McTemplateService.get_template(template_id, g.current_user)
-    return success_response(data=template.to_dict())
+    return success_response(data=template)
 
 
 @mc_bp.route("/templates/<int:template_id>", methods=["PUT", "PATCH"])

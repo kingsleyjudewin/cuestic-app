@@ -145,3 +145,80 @@ def test_create_visitor_cli(app, runner):
     bad = runner.invoke(args=["create-visitor", "--username", "realadmin", "--password", "VisitorPass1!"])
     assert bad.exit_code != 0
     assert User.query.filter_by(username="realadmin").first() is None
+
+
+@pytest.fixture
+def templates(app, admin_user):
+    from app.models.mc_script import McTemplate, McTemplateSegment
+    from app.services.mc_template_service import McTemplateService
+    McTemplateService.seed_default_templates()
+    custom = McTemplate(name="Rohan Private Flow", event_type="Workshop", created_by=admin_user["user"].id,
+                        is_public_to_team=True, is_default=False)
+    db.session.add(custom)
+    db.session.flush()
+    db.session.add(McTemplateSegment(template_id=custom.id, title="Rohan secret segment",
+                                     segment_type="welcome", sequence_order=1))
+    db.session.commit()
+    ids = {"custom": custom.id, "default": McTemplate.query.filter_by(is_default=True).first().id}
+    McTemplateService._TEMPLATES_CACHE.clear()
+    db.session.remove()
+    return ids
+
+
+@pytest.fixture(autouse=True)
+def _reset_ai_quota():
+    from app.utils import visitor_mode
+    visitor_mode._ai_calls.clear()
+    yield
+    visitor_mode._ai_calls.clear()
+
+
+def test_visitor_sees_builtin_templates_only(client, visitor, templates):
+    resp = client.get("/api/v1/mc/templates", headers=visitor["headers"])
+    assert resp.status_code == 200, resp.get_json()
+    items = _items(resp)
+    assert items and all(t["is_default"] for t in items)
+    assert "Rohan" not in resp.get_data(as_text=True)
+
+    detail = client.get(f"/api/v1/mc/templates/{templates['default']}", headers=visitor["headers"])
+    assert detail.status_code == 200
+    assert detail.get_json()["data"]["segments"]
+    assert client.get(f"/api/v1/mc/templates/{templates['custom']}",
+                      headers=visitor["headers"]).status_code == 404
+
+
+def test_visitor_can_use_ai_tools_without_saving(client, visitor, real_data):
+    before = (Event.query.count(), Team.query.count(), Member.query.count())
+    db.session.remove()
+    calls = [
+        ("/api/v1/mc/ai/generate-script", {"title": "Tech Talk", "event_type": "Technical Talk"}),
+        ("/api/v1/mc/ai/generate-segment", {"segment_type": "welcome", "event_info": {"title": "Tech Talk"}}),
+        ("/api/v1/mc/ai-assist", {"instruction": "Welcome speech"}),
+        ("/api/v1/documentation/ai-assist", {"field_key": "summary", "instruction": "Draft"}),
+    ]
+    for path, payload in calls:
+        resp = client.post(path, json=payload, headers=visitor["headers"])
+        assert resp.status_code != 403, (path, resp.get_json())
+        assert resp.status_code < 500, (path, resp.get_json())
+    assert (Event.query.count(), Team.query.count(), Member.query.count()) == before
+
+
+def test_visitor_ai_calls_are_rate_limited(app, client, visitor):
+    app.config["VISITOR_AI_CALLS_PER_HOUR"] = 2
+    try:
+        for _ in range(2):
+            r = client.post("/api/v1/mc/ai-assist", json={"instruction": "x"}, headers=visitor["headers"])
+            assert r.status_code == 200, r.get_json()
+        r = client.post("/api/v1/mc/ai-assist", json={"instruction": "x"}, headers=visitor["headers"])
+        assert r.status_code == 429
+        assert r.get_json()["error"]["code"] == "VISITOR_AI_LIMIT"
+    finally:
+        app.config["VISITOR_AI_CALLS_PER_HOUR"] = 20
+
+
+def test_visitor_still_cannot_create_scripts_or_templates(client, visitor, templates):
+    for path, payload in (("/api/v1/mc/scripts", {"title": "x", "template_id": templates["default"]}),
+                          ("/api/v1/mc/templates", {"name": "x", "event_type": "Workshop"}),
+                          ("/api/v1/documentation/reports", {"title": "x"})):
+        r = client.post(path, json=payload, headers=visitor["headers"])
+        assert r.status_code == 403, (path, r.get_json())

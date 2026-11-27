@@ -792,6 +792,33 @@ class _McDashboardScreenState extends State<McDashboardScreen>
                         .map((c) => {'name': c.text.trim(), 'role': 'Host'})
                         .toList();
 
+                    if (widget.authService.isVisitor) {
+                      // Visitor mode can't save scripts: open an unsaved draft built from the
+                      // chosen template so the programme builder and AI tools can still be tried.
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (ctx) => McScriptEditorScreen(
+                            mcService: _mcService,
+                            authService: widget.authService,
+                            initialDraft: {
+                              'title': title,
+                              'event_type': selectedType,
+                              'template_id': selectedTemplateId,
+                              'venue': venueCtrl.text.trim(),
+                              'tone': selectedTone,
+                              'anchors': anchorsPayload,
+                              'event_metadata': {
+                                'organizing_department': deptCtrl.text.trim(),
+                                'organizing_club': clubCtrl.text.trim(),
+                              },
+                            },
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+
                     try {
                       final script = await _mcService.createScript({
                         'title': title,

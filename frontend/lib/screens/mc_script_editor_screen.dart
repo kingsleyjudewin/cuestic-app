@@ -11,6 +11,9 @@ class McScriptEditorScreen extends StatefulWidget {
   final int? initialEventId;
   final int? initialTaskId;
   final int? initialFolderId;
+  /// Unsaved starting values (title, event_type, template_id, venue, tone, anchors,
+  /// event_metadata) used when the script can't be created on the server (visitor mode).
+  final Map<String, dynamic>? initialDraft;
   final McService mcService;
   final AuthService authService;
 
@@ -20,6 +23,7 @@ class McScriptEditorScreen extends StatefulWidget {
     this.initialEventId,
     this.initialTaskId,
     this.initialFolderId,
+    this.initialDraft,
     required this.mcService,
     required this.authService,
   });
@@ -146,6 +150,8 @@ class _McScriptEditorScreenState extends State<McScriptEditorScreen>
             _clubController.text = script.eventMetadata['organizing_club'];
           }
         }
+      } else if (widget.initialDraft != null) {
+        await _applyInitialDraft(widget.initialDraft!);
       }
     } catch (e) {
       _errorMessage = 'Error loading script data: $e';
@@ -154,6 +160,59 @@ class _McScriptEditorScreenState extends State<McScriptEditorScreen>
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  Future<void> _applyInitialDraft(Map<String, dynamic> draft) async {
+    String text(String key) => draft[key]?.toString().trim() ?? '';
+    if (text('title').isNotEmpty) _titleController.text = text('title');
+    if (text('event_type').isNotEmpty) _eventTypeController.text = text('event_type');
+    if (text('venue').isNotEmpty) _venueController.text = text('venue');
+    if (text('tone').isNotEmpty) _selectedTone = text('tone');
+
+    final meta = draft['event_metadata'];
+    if (meta is Map) {
+      final dept = meta['organizing_department']?.toString().trim() ?? '';
+      final club = meta['organizing_club']?.toString().trim() ?? '';
+      if (dept.isNotEmpty) _deptController.text = dept;
+      if (club.isNotEmpty) _clubController.text = club;
+    }
+
+    final anchors = draft['anchors'];
+    if (anchors is List && anchors.isNotEmpty) {
+      _anchors = [
+        for (var i = 0; i < anchors.length; i++)
+          McAnchor(id: i + 1, name: (anchors[i] as Map)['name']?.toString() ?? 'MC ${i + 1}', role: 'MC ${i + 1}'),
+      ];
+    }
+
+    final templateId = draft['template_id'];
+    if (templateId is int && templateId > 0) {
+      final template = await widget.mcService.fetchTemplateDetail(templateId);
+      final mcNames = {for (final a in _anchors) a.role: a.name};
+      _segments = [
+        for (final seg in template.segments)
+          McScriptSegment(
+            id: 'draft_${seg.id}',
+            segmentType: seg.segmentType,
+            title: seg.title,
+            sequenceOrder: seg.sequenceOrder,
+            assignedMc: mcNames[seg.defaultMcAssignment] ?? seg.defaultMcAssignment,
+            dialogue: '',
+            stageDirections: seg.defaultStageDirections ?? '',
+            inputData: {
+              if (seg.aiInstructions != null && seg.aiInstructions!.isNotEmpty) 'ai_instructions': seg.aiInstructions,
+            },
+          ),
+      ];
+    }
+  }
+
+  void _showVisitorNotSaved() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Visitor mode: this draft is not saved. Sign in with a club account to save, export or submit.'),
+      ),
+    );
   }
 
   Map<String, dynamic> _collectPayload() {
@@ -180,6 +239,10 @@ class _McScriptEditorScreenState extends State<McScriptEditorScreen>
   }
 
   Future<void> _saveDraft({bool showNotice = true}) async {
+    if (widget.authService.isVisitor) {
+      _showVisitorNotSaved();
+      return;
+    }
     if (_titleController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a script title.')),

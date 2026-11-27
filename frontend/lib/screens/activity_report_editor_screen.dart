@@ -12,12 +12,15 @@ import '../widgets/secondary_button.dart';
 
 class ActivityReportEditorScreen extends StatefulWidget {
   final int? reportId;
+  /// Title for a new, not-yet-saved report (visitor mode opens reports this way).
+  final String? initialTitle;
   final DocumentationService docService;
   final AuthService authService;
 
   const ActivityReportEditorScreen({
     super.key,
     this.reportId,
+    this.initialTitle,
     required this.docService,
     required this.authService,
   });
@@ -231,7 +234,7 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
   Future<void> _loadReport() async {
     if (_currentReportId == null) {
       // New report draft initialization
-      _titleController.text = 'New Activity Report';
+      _titleController.text = widget.initialTitle ?? 'New Activity Report';
       _dateController.text = DateTime.now().toString().split(' ')[0];
       _timeController.text = '10:00 AM - 1:00 PM';
       _venueController.text = 'Central Campus, Auditorium';
@@ -507,6 +510,16 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
   }
 
   Future<void> _saveDraft({bool showNotice = true}) async {
+    if (widget.authService.isVisitor) {
+      if (showNotice) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Visitor mode: this report is not saved. Sign in with a club account to save or export.'),
+          ),
+        );
+      }
+      return;
+    }
     setState(() => _isSaving = true);
     try {
       final payloadData = _buildPayloadData();
@@ -556,10 +569,11 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
   }
 
   Future<void> _runAiCopilot({String action = 'draft'}) async {
-    if (_currentReportId == null) {
+    final unsavedVisitorDraft = widget.authService.isVisitor && _currentReportId == null;
+    if (_currentReportId == null && !unsavedVisitorDraft) {
       await _saveDraft(showNotice: false);
     }
-    if (_currentReportId == null) return;
+    if (_currentReportId == null && !unsavedVisitorDraft) return;
 
     setState(() {
       _isAiBusy = true;
@@ -569,7 +583,10 @@ class _ActivityReportEditorScreenState extends State<ActivityReportEditorScreen>
     final bool hasExtractedContext = _extractedPosterContext != null;
     try {
       final res = await widget.docService.aiAssist(
-        reportId: _currentReportId!,
+        reportId: _currentReportId,
+        reportContext: unsavedVisitorDraft
+            ? (_buildPayloadData()['general_information'] as Map<String, dynamic>?)
+            : null,
         fieldKey: _activeFieldKey,
         fieldLabel: _activeFieldLabel,
         instruction: _aiInstructionController.text.trim().isNotEmpty

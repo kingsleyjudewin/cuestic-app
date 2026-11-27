@@ -8,6 +8,7 @@ from app.schemas.team import TeamCreateSchema, TeamUpdateSchema
 from app.utils.permissions import token_required, admin_required
 from app.utils.errors import success_response, ValidationError, NotFoundError, ConflictError
 from app.services.audit_service import AuditService
+from app.utils.visitor_mode import caching_allowed
 
 teams_bp = Blueprint("teams", __name__)
 
@@ -25,7 +26,7 @@ def invalidate_teams_cache():
 def _load_teams_into_cache() -> list[dict]:
     global _TEAMS_CACHE, _TEAMS_CACHE_AT
     now = time.time()
-    if _TEAMS_CACHE is not None and (now - _TEAMS_CACHE_AT < _TEAMS_CACHE_TTL):
+    if caching_allowed() and _TEAMS_CACHE is not None and (now - _TEAMS_CACHE_AT < _TEAMS_CACHE_TTL):
         return _TEAMS_CACHE
 
     from sqlalchemy import func
@@ -43,6 +44,8 @@ def _load_teams_into_cache() -> list[dict]:
         td["member_count"] = counts.get(team.id, 0)
         data.append(td)
 
+    if not caching_allowed():
+        return data
     _TEAMS_CACHE = data
     _TEAMS_CACHE_AT = now
     return _TEAMS_CACHE
@@ -282,7 +285,7 @@ def get_team_members(team_id: int):
 
     global _TEAMS_CACHE
     leader_user_id = None
-    if _TEAMS_CACHE:
+    if _TEAMS_CACHE and caching_allowed():
         team_dict = next((t for t in _TEAMS_CACHE if t["id"] == team_id), None)
         if team_dict:
             leader_user_id = team_dict.get("leader_user_id")

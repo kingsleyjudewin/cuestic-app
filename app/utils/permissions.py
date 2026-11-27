@@ -35,6 +35,12 @@ def _enforce_password_change(user):
         )
 
 
+def _apply_visitor_mode(user):
+    from app.utils.visitor_mode import is_visitor_user, enter_visitor_mode
+    if is_visitor_user(user):
+        enter_visitor_mode(user)
+
+
 def invalidate_token_cache(token_hash: str = None, user_id: int = None):
     """Invalidate cached token records upon logout or password change."""
     global _TOKEN_CACHE
@@ -140,6 +146,7 @@ def token_required(f):
             g.current_user = user
             g.current_token = token_record
             _enforce_password_change(user)
+            _apply_visitor_mode(user)
             return f(*args, **kwargs)
 
         # Uncached or expired cache: perform 1 single eager joined query
@@ -181,6 +188,7 @@ def token_required(f):
         g.current_user = user
         g.current_token = token_record
         _enforce_password_change(user)
+        _apply_visitor_mode(user)
 
         return f(*args, **kwargs)
 

@@ -7,6 +7,7 @@ from app.schemas.member import MemberCreateSchema, MemberUpdateSchema, MemberAcc
 from app.services.member_service import MemberService
 from app.utils.permissions import token_required, leader_or_admin_required, admin_required, check_can_manage_member
 from app.utils.errors import success_response, ValidationError
+from app.utils.visitor_mode import caching_allowed
 
 members_bp = Blueprint("members", __name__)
 
@@ -21,10 +22,12 @@ _MEMBERS_CACHE_TTL = 1800.0  # 30 minutes TTL
 def get_assignment_member_ids():
     global _ASSIGNMENT_MEMBERS_CACHE, _ASSIGNMENT_MEMBERS_CACHE_AT
     now = time.time()
-    if _ASSIGNMENT_MEMBERS_CACHE is not None and (now - _ASSIGNMENT_MEMBERS_CACHE_AT < 60.0):
+    if caching_allowed() and _ASSIGNMENT_MEMBERS_CACHE is not None and (now - _ASSIGNMENT_MEMBERS_CACHE_AT < 60.0):
         return _ASSIGNMENT_MEMBERS_CACHE
     from app.models.task_assignment import TaskAssignment
     rows = db.session.query(TaskAssignment.member_id).distinct().all()
+    if not caching_allowed():
+        return {r[0] for r in rows if r[0] is not None}
     _ASSIGNMENT_MEMBERS_CACHE = {r[0] for r in rows if r[0] is not None}
     _ASSIGNMENT_MEMBERS_CACHE_AT = now
     return _ASSIGNMENT_MEMBERS_CACHE
@@ -45,7 +48,7 @@ def invalidate_members_cache():
 def _load_all_members_into_cache():
     global _MEMBERS_CACHE, _MEMBERS_CACHE_AT
     now = time.time()
-    if _MEMBERS_CACHE is not None and (now - _MEMBERS_CACHE_AT < _MEMBERS_CACHE_TTL):
+    if caching_allowed() and _MEMBERS_CACHE is not None and (now - _MEMBERS_CACHE_AT < _MEMBERS_CACHE_TTL):
         return _MEMBERS_CACHE
 
     members = (
@@ -58,13 +61,16 @@ def _load_all_members_into_cache():
     )
     active_assignment_member_ids = get_assignment_member_ids()
 
-    _MEMBERS_CACHE = [
+    data = [
         m.to_dict(
             include_sensitive=True,
             has_history=(m.id in active_assignment_member_ids),
         )
         for m in members
     ]
+    if not caching_allowed():
+        return data
+    _MEMBERS_CACHE = data
     _MEMBERS_CACHE_AT = now
     return _MEMBERS_CACHE
 

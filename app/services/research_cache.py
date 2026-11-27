@@ -7,6 +7,7 @@ fine-grained invalidation upon any database mutation.
 import time
 import threading
 from typing import Any, Optional, Dict, List, Set
+from app.utils.visitor_mode import caching_allowed
 
 
 class ResearchCache:
@@ -20,6 +21,8 @@ class ResearchCache:
         self._tags: Dict[str, Set[str]] = {}
 
     def get(self, key: str) -> Optional[Any]:
+        if not caching_allowed():
+            return None
         with self._lock:
             entry = self._cache.get(key)
             if not entry:
@@ -30,6 +33,8 @@ class ResearchCache:
             return entry["data"]
 
     def set(self, key: str, data: Any, ttl: Optional[float] = None, tags: Optional[List[str]] = None) -> None:
+        if not caching_allowed():
+            return
         effective_ttl = ttl if ttl is not None else self._default_ttl
         expires_at = time.time() + effective_ttl
         with self._lock:

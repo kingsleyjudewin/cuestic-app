@@ -119,6 +119,8 @@ class User(db.Model):
 
         # Older app builds already route users with must_change_password=true to a password screen.
         data["password_change_required"] = self.requires_password_change
+        from app.utils.visitor_mode import is_visitor_user
+        data["is_visitor"] = is_visitor_user(self)
         if self.requires_password_change:
             data["must_change_password"] = True
 

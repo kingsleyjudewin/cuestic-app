@@ -336,7 +336,7 @@ class ApiClient {
       }
       throw ApiException(
         statusCode: 403,
-        code: 'FORBIDDEN',
+        code: errorCode == 'VISITOR_READ_ONLY' ? 'VISITOR_READ_ONLY' : 'FORBIDDEN',
         message: errorMessage.isNotEmpty ? errorMessage : 'You do not have permission for this action.',
         details: details,
       );

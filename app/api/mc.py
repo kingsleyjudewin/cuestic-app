@@ -18,6 +18,7 @@ from app.models.mc_script import McScript, McScriptSegment
 from app.utils.permissions import token_required
 from app.utils.heavy_jobs import heavy_job
 from app.utils.errors import success_response, ValidationError, NotFoundError
+from app.utils.visitor_mode import caching_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,13 @@ def list_available_events():
     """List existing club events to populate script details and prevent re-entering data (cached)."""
     global _EVENTS_CACHE
     now_ts = time.time()
-    if _EVENTS_CACHE[1] and (now_ts - _EVENTS_CACHE[0] < _CACHE_TTL):
+    if caching_allowed() and _EVENTS_CACHE[1] and (now_ts - _EVENTS_CACHE[0] < _CACHE_TTL):
         return success_response(data=_EVENTS_CACHE[1])
 
     events = Event.query.order_by(Event.start_at.desc()).all()
     data = [e.to_dict() for e in events]
-    _EVENTS_CACHE = (now_ts, data)
+    if caching_allowed():
+        _EVENTS_CACHE = (now_ts, data)
     return success_response(data=data)
 
 
@@ -65,7 +67,7 @@ def get_my_tasks():
     now_ts = time.time()
     cache_key = str(user.id)
     cached = _MY_TASKS_CACHE.get(cache_key)
-    if cached and (now_ts - cached[0] < _CACHE_TTL):
+    if cached and caching_allowed() and (now_ts - cached[0] < _CACHE_TTL):
         return success_response(data=cached[1])
 
     query = TaskAssignment.query.options(
@@ -103,7 +105,8 @@ def get_my_tasks():
         td["linked_script_status"] = script.status if script else None
         tasks_data.append(td)
 
-    _MY_TASKS_CACHE[cache_key] = (now_ts, tasks_data)
+    if caching_allowed():
+        _MY_TASKS_CACHE[cache_key] = (now_ts, tasks_data)
     return success_response(data=tasks_data)
 
 

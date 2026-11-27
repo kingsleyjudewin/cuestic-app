@@ -310,3 +310,22 @@ collaborators to re-clone. Rotation is what actually protects the accounts.
 | App shows "App configuration error" | APK/web built without a valid HTTPS `API_BASE_URL` |
 | Everything returns 403 `PASSWORD_CHANGE_REQUIRED` | Expected until that user sets a new password (§8). Admin is never affected |
 | Instance restarts during OCR | Plan too small (needs 2 GB) |
+
+## Visitor (demo) account
+
+A shared login that sees the admin screens on an **empty, read-only** workspace. The server enforces this (see
+`app/utils/visitor_mode.py`): every database read in a visitor request is filtered to nothing (except the visitor's
+own user row), every write answers `403 VISITOR_READ_ONLY`, and the in-memory caches are bypassed, so no real
+data is ever served to it. The app shows a yellow "Visitor mode" strip.
+
+Which usernames count as visitors is set by `VISITOR_USERNAMES` (default `visitor`, comma-separated). Create or
+reset the account against the production database once (Render free plan has no shell, so run it locally with
+`DATABASE_URL` pointing at Neon):
+
+```bash
+DATABASE_URL='postgresql://…neon…' FLASK_APP=wsgi.py flask create-visitor --password 'Visitor@2026'
+```
+
+The command refuses usernames that are not in `VISITOR_USERNAMES`, so it can never create a real admin by
+mistake. To withdraw visitor access, deactivate the account or change its password with the same command.
+
